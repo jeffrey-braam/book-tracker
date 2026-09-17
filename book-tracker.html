@@ -294,6 +294,7 @@
       <select id="tbrGenreFilter"><option value="">All genres/moods</option></select>
       <button class="secondary small" id="pickForMeFromTbrBtn">🎲 Pick for me</button>
     </div>
+    <div id="tbrPickResult"></div>
     <div class="priority-tier">
       <h3>Up Next</h3>
       <div class="grid-cards" id="tbrUpNext"></div>
@@ -732,6 +733,19 @@
   const $ = id => document.getElementById(id);
   const splitList = str => String(str||"").split(",").map(s=>s.trim()).filter(Boolean);
 
+  // Dates are stored as "YYYY-MM-DD" in the reader's LOCAL calendar. toISOString() would
+  // give the UTC date instead, which is already tomorrow on an evening west of UTC; and
+  // new Date("2024-03-01") is parsed as UTC midnight, which is still February locally.
+  // These two helpers keep every date on the local calendar in both directions.
+  function todayStr(){
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  }
+  function parseYmd(s){
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s||""));
+    return m ? new Date(+m[1], +m[2]-1, +m[3]) : null;
+  }
+
   function blankLibrary(){ return { books: [], challenges: [] }; }
 
   // One shape for a profile, so every place that creates one agrees on the fields.
@@ -741,7 +755,7 @@
       name: name || "New Profile",
       emoji: "📚",
       color: PROFILE_COLORS[0],
-      created: new Date().toISOString().slice(0,10),
+      created: todayStr(),
       data: blankLibrary()
     }, overrides||{});
   }
@@ -765,7 +779,7 @@
       if(raw) legacy = JSON.parse(raw);
     }catch(e){ console.warn("Could not read pre-profiles data", e); }
     const first = (legacy && Array.isArray(legacy.books))
-      ? makeProfile("My Library", { data: legacy })
+      ? makeProfile("My Library", { data: normalizeLibrary(legacy) })
       : makeProfile("My Library");
     return { activeId: first.id, profiles: [first] };
   }
@@ -774,16 +788,77 @@
   // rest of the app assumes exist, and activeId is forced to name a profile that is
   // actually present. Called on load and on restoring a backup.
   function normalizeStore(st){
+    st.profiles = st.profiles.filter(p=>p && typeof p === "object");
+    if(!st.profiles.length) st.profiles.push(makeProfile("My Library"));
     st.profiles.forEach(p=>{
-      if(!p.id) p.id = makeProfile().id;
-      if(!p.name) p.name = "Unnamed";
-      if(!p.emoji) p.emoji = "📚";
-      if(!p.color) p.color = PROFILE_COLORS[0];
-      if(!p.data || !Array.isArray(p.data.books)) p.data = blankLibrary();
-      if(!Array.isArray(p.data.challenges)) p.data.challenges = [];
+      p.id = p.id ? String(p.id) : makeProfile().id;
+      p.name = p.name ? String(p.name) : "Unnamed";
+      p.emoji = p.emoji ? String(p.emoji) : "📚";
+      // The colour is written into a CSS property, so only a plain hex colour is accepted.
+      if(!/^#[0-9a-f]{6}$/i.test(String(p.color||""))) p.color = PROFILE_COLORS[0];
+      p.created = parseYmd(p.created) ? p.created : todayStr();
+      p.data = normalizeLibrary(p.data);
     });
     if(!st.profiles.some(p=>p.id===st.activeId)) st.activeId = st.profiles[0].id;
     return st;
+  }
+
+  // A library can arrive from a file someone edited by hand, or from an older version of
+  // this app, so every book and challenge is coerced into the exact shape the rest of the
+  // code assumes: known values for the enums, numbers where numbers are expected, strings
+  // everywhere else. Besides preventing crashes on a missing title, this matters for
+  // safety: much of the page is built as HTML strings, and a "progress" of
+  // '"><script>' should never reach one.
+  function normalizeLibrary(lib){
+    const src = (lib && typeof lib === "object") ? lib : {};
+    return {
+      books: (Array.isArray(src.books) ? src.books : []).filter(b=>b && typeof b === "object").map(normalizeBook),
+      challenges: (Array.isArray(src.challenges) ? src.challenges : []).filter(c=>c && typeof c === "object").map(normalizeChallenge)
+    };
+  }
+  function normalizeBook(raw){
+    const str = v => v==null ? "" : String(v);
+    const oneOf = (v, allowed, fallback) => allowed.includes(v) ? v : fallback;
+    const intIn = (v, lo, hi) => { const n = parseInt(v,10); return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : lo; };
+    const ymdOrNull = v => parseYmd(v) ? v : null;
+    const strList = v => (Array.isArray(v) ? v : []).map(str).map(s=>s.trim()).filter(Boolean);
+    const pages = parseInt(raw.pages,10);
+    const seriesNum = raw.series ? parseFloat(raw.series.num) : NaN;
+    const book = makeBook({
+      id: str(raw.id) || uid(),
+      isbn: str(raw.isbn), title: str(raw.title) || "Untitled", author: str(raw.author), cover: str(raw.cover),
+      series: (raw.series && typeof raw.series === "object" && str(raw.series.name).trim())
+        ? { name: str(raw.series.name).trim(), num: isFinite(seriesNum) ? seriesNum : null } : null,
+      format: oneOf(raw.format, ["physical","ebook","audiobook"], "physical"),
+      pages: pages > 0 ? pages : null,
+      status: oneOf(raw.status, ["tbr","reading","read","dnf"], "tbr"),
+      priority: oneOf(raw.priority, ["next","someday"], "someday"),
+      progress: intIn(raw.progress, 0, 100),
+      dateStarted: ymdOrNull(raw.dateStarted), dateFinished: ymdOrNull(raw.dateFinished),
+      rating: intIn(raw.rating, 0, 5),
+      notes: str(raw.notes), dnfReason: str(raw.dnfReason),
+      isTopRead: !!raw.isTopRead, isRereadCandidate: !!raw.isRereadCandidate, isReread: !!raw.isReread,
+      quotes: (Array.isArray(raw.quotes) ? raw.quotes : [])
+        .map(q => (q && typeof q === "object") ? { text: str(q.text), page: str(q.page) } : { text: str(q), page: "" })
+        .filter(q=>q.text.trim()),
+      shelves: strList(raw.shelves), tags: strList(raw.tags),
+      dateAdded: ymdOrNull(raw.dateAdded) || todayStr()
+    });
+    // The two ordering fields only exist once a list has been dragged.
+    if(isFinite(parseFloat(raw.sortIndex))) book.sortIndex = parseFloat(raw.sortIndex);
+    if(isFinite(parseFloat(raw.topReadRank))) book.topReadRank = parseFloat(raw.topReadRank);
+    return book;
+  }
+  function normalizeChallenge(raw){
+    const type = raw.type === "bingo" ? "bingo" : "checklist";
+    let items = (Array.isArray(raw.items) ? raw.items : [])
+      .filter(it=>it && typeof it === "object")
+      .map(it=>({ label: String(it.label==null ? "" : it.label), done: !!it.done }));
+    if(type === "bingo"){
+      items = items.slice(0,25);
+      while(items.length < 25) items.push({ label: "Square " + (items.length+1), done:false });
+    }
+    return { id: raw.id ? String(raw.id) : uid(), name: String(raw.name || "Challenge"), type, items };
   }
 
   function activeProfile(){
@@ -794,9 +869,19 @@
   // Writes the whole set of profiles. The first line re-attaches `data` to the active
   // profile before saving: Import replaces `data` with a whole new object, and without
   // this that replacement would never reach storage.
+  // setItem throws when the browser's storage quota is used up or site data is blocked.
+  // Letting that escape would abort whichever handler called saveData halfway through, so
+  // the failure is reported instead; the change stays on screen, and Export still works.
   function saveData(){
     activeProfile().data = data;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    try{
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+      return true;
+    }catch(e){
+      console.warn("Could not save", e);
+      toast("Couldn't save — browser storage is full or blocked. Export a backup now.", true);
+      return false;
+    }
   }
   // Every book needs a unique id. Timestamp + random suffix is plenty for a local app.
   function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
@@ -808,18 +893,24 @@
       pages:null, status:"tbr", priority:"someday", progress:0, dateStarted:null,
       dateFinished:null, rating:0, notes:"", dnfReason:"", isTopRead:false,
       isRereadCandidate:false, isReread:false, quotes:[], shelves:[], tags:[],
-      dateAdded: new Date().toISOString().slice(0,10)
+      dateAdded: todayStr()
     }, overrides);
   }
 
   // Shows the little pop-up message. The clearTimeout/setTimeout pair means a second
   // message restarts the timer instead of the first one hiding it early.
-  function toast(msg){
+  // An error message (isError) stays up longer and cannot be replaced by an ordinary one
+  // while it shows — otherwise "Couldn't save" would be wiped out a moment later by the
+  // "Saved" that the same click goes on to report.
+  function toast(msg, isError){
+    if(!isError && Date.now() < (toast._errorUntil||0)) return;
     const t = $("toast");
     t.textContent = msg;
     t.classList.add("show");
     clearTimeout(toast._h);
-    toast._h = setTimeout(()=>t.classList.remove("show"), 2200);
+    const ms = isError ? 6000 : 2200;
+    toast._errorUntil = isError ? Date.now() + ms : 0;
+    toast._h = setTimeout(()=>t.classList.remove("show"), ms);
   }
 
   // IMPORTANT: escapes text before it is inserted into the page as HTML.
@@ -1492,7 +1583,7 @@
       exported: new Date().toISOString(),
       activeId: store.activeId,
       profiles: store.profiles
-    }, "book-tracker-all-profiles-" + new Date().toISOString().slice(0,10) + ".json");
+    }, "book-tracker-all-profiles-" + todayStr() + ".json");
     toast("Backed up " + store.profiles.length + " profile" + (store.profiles.length===1?"":"s"));
   });
 
@@ -1510,6 +1601,7 @@
           if(!confirm("This file holds " + n + " profile" + (n===1?"":"s") + ".\n\nRestoring replaces every profile currently in this browser. Continue?")) return;
           store = normalizeStore({ activeId: imported.activeId, profiles: imported.profiles });
           data = activeProfile().data;
+          if(selectionMode) setSelectionMode(false);
           saveData();
           applyProfileTheme(); renderProfileUI(); renderAll();
           toast("Restored " + n + " profile" + (n===1?"":"s"));
@@ -1518,8 +1610,8 @@
           // which is worth a confirmation when that profile is not empty.
           const here = activeProfile();
           if(data.books.length && !confirm("Replace the " + data.books.length + " book" + (data.books.length===1?"":"s") + " in “" + here.name + "” with this file?\n\nThe other profiles are not affected.")) return;
-          data = imported;
-          if(!Array.isArray(data.challenges)) data.challenges = [];
+          data = normalizeLibrary(imported);
+          if(selectionMode) setSelectionMode(false);   // selected ids belonged to the old library
           saveData(); renderAll(); renderCompare();
           toast("Imported into " + here.name);
         } else {
@@ -1595,7 +1687,7 @@
   // kinds of identifier — the caller uses it to decide whether to offer the choice.
   function parseBulkFile(text, splitColumns){
     const rawLines = text.split(/\r?\n/).filter(l=>l.trim().length);
-    if(!rawLines.length) return [];
+    if(!rawLines.length) return { entries: [], mixedRows: 0 };
     const rows = rawLines.map(splitCsvLine);
 
     // Detect a header row by column-name keywords; otherwise treat every row as data.
@@ -1985,6 +2077,15 @@
     data.books.forEach(b=>(b[field]||[]).forEach(x=>s.add(x)));
     return [...s].sort();
   }
+  // Refills a filter <select> with an "all" option plus the given values, keeps the current
+  // choice if it is still offered, and returns the value now selected.
+  function fillFilterSelect(sel, allLabel, values){
+    const current = sel.value;
+    sel.innerHTML = `<option value="">${esc(allLabel)}</option>`
+      + values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join("");
+    sel.value = values.includes(current) ? current : "";
+    return sel.value;
+  }
   function seriesGroups(){
     const map = {};
     data.books.forEach(b=>{
@@ -2037,29 +2138,29 @@
       extra += `<div class="muted">Dropped: ${esc(book.dnfReason)}</div>`;
     }
 
-    let actions = `<button class="small secondary" data-action="edit" data-id="${book.id}">Edit</button>`;
+    let actions = `<button class="small secondary" data-action="edit" data-id="${esc(book.id)}">Edit</button>`;
     if(book.status==="tbr"){
-      actions += `<button class="small" data-action="start-reading" data-id="${book.id}">Start Reading</button>`;
+      actions += `<button class="small" data-action="start-reading" data-id="${esc(book.id)}">Start Reading</button>`;
       actions += book.priority==="someday"
-        ? `<button class="small secondary" data-tier-move="next" data-id="${book.id}">Move to Up Next</button>`
-        : `<button class="small secondary" data-tier-move="someday" data-id="${book.id}">Remove from Up Next</button>`;
+        ? `<button class="small secondary" data-tier-move="next" data-id="${esc(book.id)}">Move to Up Next</button>`
+        : `<button class="small secondary" data-tier-move="someday" data-id="${esc(book.id)}">Remove from Up Next</button>`;
     }
     if(book.status==="reading"){
-      actions += `<button class="small" data-action="finish-reading" data-id="${book.id}">Mark Finished</button>`;
-      actions += `<button class="small secondary" data-action="dnf-reading" data-id="${book.id}">DNF</button>`;
+      actions += `<button class="small" data-action="finish-reading" data-id="${esc(book.id)}">Mark Finished</button>`;
+      actions += `<button class="small secondary" data-action="dnf-reading" data-id="${esc(book.id)}">DNF</button>`;
     }
     if(book.status==="read"){
-      actions += `<button class="small secondary" data-action="reread" data-id="${book.id}">Log Reread</button>`;
+      actions += `<button class="small secondary" data-action="reread" data-id="${esc(book.id)}">Log Reread</button>`;
     }
     // Only worth offering once there is somewhere to send it.
     if(store.profiles.length > 1){
-      actions += `<button class="small secondary" data-send-id="${book.id}">Send to\u2026</button>`;
+      actions += `<button class="small secondary" data-send-id="${esc(book.id)}">Send to\u2026</button>`;
     }
 
     const isSelected = selectedIds.has(book.id);
-    const checkbox = selectionMode ? `<label class="select-checkbox"><input type="checkbox" data-select-id="${book.id}" ${isSelected?"checked":""}></label>` : "";
+    const checkbox = selectionMode ? `<label class="select-checkbox"><input type="checkbox" data-select-id="${esc(book.id)}" ${isSelected?"checked":""}></label>` : "";
 
-    return `<div class="book-card${isSelected?' selected':''}" draggable="${opts.draggable?'true':'false'}" data-id="${book.id}">
+    return `<div class="book-card${isSelected?' selected':''}" draggable="${opts.draggable?'true':'false'}" data-id="${esc(book.id)}">
       ${checkbox}
       ${coverImg(book,"cover")}
       <div class="book-info">
@@ -2093,11 +2194,11 @@
       if(!book) return;
       const action = actBtn.dataset.action;
       if(action==="edit") openModal(book);
-      else if(action==="start-reading"){ book.status="reading"; book.progress=book.progress||0; book.dateStarted = book.dateStarted || new Date().toISOString().slice(0,10); saveData(); renderAll(); }
-      else if(action==="finish-reading"){ book.status="read"; book.progress=100; book.dateFinished = new Date().toISOString().slice(0,10); saveData(); renderAll(); openModal(book); }
-      else if(action==="dnf-reading"){ book.status="dnf"; book.dateFinished = new Date().toISOString().slice(0,10); saveData(); renderAll(); openModal(book); }
+      else if(action==="start-reading"){ book.status="reading"; book.progress=book.progress||0; book.dateStarted = book.dateStarted || todayStr(); saveData(); renderAll(); }
+      else if(action==="finish-reading"){ book.status="read"; book.progress=100; book.dateFinished = todayStr(); saveData(); renderAll(); openModal(book); }
+      else if(action==="dnf-reading"){ book.status="dnf"; book.dateFinished = todayStr(); saveData(); renderAll(); openModal(book); }
       else if(action==="reread"){
-        const newBook = Object.assign({}, book, { id: uid(), isReread:true, status:"reading", progress:0, dateStarted: new Date().toISOString().slice(0,10), dateFinished:null, notes:"", quotes: (book.quotes||[]).slice() });
+        const newBook = Object.assign({}, book, { id: uid(), isReread:true, status:"reading", progress:0, dateStarted: todayStr(), dateFinished:null, notes:"", quotes: (book.quotes||[]).slice() });
         data.books.push(newBook);
         saveData(); renderAll();
         toast("New reread started — track it in Currently Reading");
@@ -2137,34 +2238,42 @@
   // Shared by the TBR tiers and the Top 5 list: identical drag mechanics, with each caller
   // supplying its row selector and what to persist once the row order settles.
   let dragSrcId = null;
+  let dragDropped = false;
   // Drag-and-drop reordering, using the browser's built-in HTML5 drag events.
   // dragover fires continuously while dragging: it moves the dragged element within the
   // DOM so the list reorders under the cursor, and calling preventDefault() is what marks
-  // this container as a valid drop target. On drop, the new on-screen order is read back
-  // out of the DOM and handed to onDrop so the caller can persist it.
-  function attachSortable(container, selector, onDrop){
+  // this container as a valid drop target. The dragged element is looked up across the
+  // whole document, so a card dragged from one TBR tier previews in the other tier as soon
+  // as it is over it. On drop, the new on-screen order is read back out of the DOM and
+  // handed to onDrop so the caller can persist it. A drag released anywhere else leaves
+  // the DOM rearranged but the data untouched, so `rerender` puts the screen back.
+  function attachSortable(container, selector, onDrop, rerender){
     if(container.dataset.dndAttached === "1") return;
     container.dataset.dndAttached = "1";
     container.addEventListener("dragstart", (e)=>{
       const row = e.target.closest(selector);
       if(!row) return;
       dragSrcId = row.dataset.id;
+      dragDropped = false;
       row.classList.add("dragging");
     });
     container.addEventListener("dragend", (e)=>{
       const row = e.target.closest(selector);
       if(row) row.classList.remove("dragging");
+      if(!dragDropped) rerender();
     });
     container.addEventListener("dragover", (e)=>{
+      const dragging = document.querySelector(selector + ".dragging");
+      if(!dragging) return;   // not one of ours (e.g. a file dragged in), so not a drop target
       e.preventDefault();
-      const dragging = container.querySelector(".dragging");
-      if(!dragging) return;
       const after = getDragAfterElement(container, e.clientY, selector);
       if(after == null) container.appendChild(dragging);
       else container.insertBefore(dragging, after);
     });
     container.addEventListener("drop", (e)=>{
+      if(!document.querySelector(selector + ".dragging")) return;
       e.preventDefault();
+      dragDropped = true;
       const ids = [...container.querySelectorAll(selector)].map(el=>el.dataset.id);
       onDrop(ids);
       saveData();
@@ -2174,13 +2283,19 @@
     attachSortable(container, ".book-card", (ids)=>{
       const moved = data.books.find(b=>b.id===dragSrcId);
       if(moved) moved.priority = tier;
-      // DOM order becomes sortIndex, which is what renderTBR sorts the tier by.
-      ids.forEach((id, idx)=>{
-        const b = data.books.find(x=>x.id===id);
-        if(b) b.sortIndex = idx;
-      });
+      // The cards on screen may be only part of the tier when a search or filter is on.
+      // Numbering just those 0..n would collide with the hidden books' indexes, so instead
+      // the visible books are poured, in their new order, back into the slots the visible
+      // books occupied in the full tier; hidden books keep their places untouched.
+      const visible = new Set(ids);
+      const tierBooks = data.books
+        .filter(b=>b.status==="tbr" && (tier==="someday" ? b.priority==="someday" : b.priority!=="someday"))
+        .sort((a,b)=>(a.sortIndex||0)-(b.sortIndex||0));
+      const reordered = ids.map(id=>data.books.find(b=>b.id===id)).filter(Boolean);
+      tierBooks.map(b=> visible.has(b.id) ? reordered.shift() : b)
+        .forEach((b, idx)=>{ if(b) b.sortIndex = idx; });
       renderTBR();
-    });
+    }, renderTBR);
   }
   function attachTopReadsDnD(container){
     attachSortable(container, "li[data-id]", (ids)=>{
@@ -2189,7 +2304,7 @@
         if(b) b.topReadRank = idx;
       });
       renderRankings();
-    });
+    }, renderRankings);
   }
   function getDragAfterElement(container, y, selector){
     const rows = [...container.querySelectorAll(`${selector||".book-card"}:not(.dragging)`)];
@@ -2206,20 +2321,11 @@
   // ---------- RENDER: TBR ----------
   function renderTBR(){
     const search = ($("tbrSearch").value||"").toLowerCase();
-    const shelfFilter = $("tbrShelfFilter").value;
-    const tagFilter = $("tbrGenreFilter").value;
-
-    // populate filter dropdowns once
-    const shelfSel = $("tbrShelfFilter");
-    if(shelfSel.dataset.built !== "1"){
-      allValues("shelves").forEach(s=>{ const o=document.createElement("option"); o.value=s; o.textContent=s; shelfSel.appendChild(o); });
-      shelfSel.dataset.built = "1";
-    }
-    const tagSel = $("tbrGenreFilter");
-    if(tagSel.dataset.built !== "1"){
-      allValues("tags").forEach(s=>{ const o=document.createElement("option"); o.value=s; o.textContent=s; tagSel.appendChild(o); });
-      tagSel.dataset.built = "1";
-    }
+    // The filter options are rebuilt on every render, so shelves and tags added since the
+    // page loaded — or those of a profile just switched to — are always listed. A choice
+    // that no longer exists (e.g. it belonged to the previous profile) falls back to "All".
+    const shelfFilter = fillFilterSelect($("tbrShelfFilter"), "All shelves", allValues("shelves"));
+    const tagFilter = fillFilterSelect($("tbrGenreFilter"), "All genres/moods", allValues("tags"));
 
     let tbrBooks = data.books.filter(b=>b.status==="tbr");
     if(search) tbrBooks = tbrBooks.filter(b=>(b.title||"").toLowerCase().includes(search) || (b.author||"").toLowerCase().includes(search));
@@ -2252,7 +2358,8 @@
   $("tbrShelfFilter").addEventListener("change", renderTBR);
   $("tbrGenreFilter").addEventListener("change", renderTBR);
 
-  $("pickForMeFromTbrBtn").addEventListener("click", pickForMe);
+  // The result is drawn right here on the TBR tab; the Discovery panel is not visible from it.
+  $("pickForMeFromTbrBtn").addEventListener("click", ()=>pickForMe("tbrPickResult"));
 
   // ---------- RENDER: READING ----------
   function renderReading(){
@@ -2331,7 +2438,7 @@
       if(br!=null) return 1;
       return (b.rating||0)-(a.rating||0);
     }).slice(0,5);
-    $("topReadsList").innerHTML = topReads.map((b,i)=>`<li draggable="true" data-id="${b.id}"><span><span class="rank-num">${i+1}</span>${esc(b.title)} — <span class="muted">${esc(b.author||"")}</span></span><span class="stars">${starStr(b.rating)}</span></li>`).join("");
+    $("topReadsList").innerHTML = topReads.map((b,i)=>`<li draggable="true" data-id="${esc(b.id)}"><span><span class="rank-num">${i+1}</span>${esc(b.title)} — <span class="muted">${esc(b.author||"")}</span></span><span class="stars">${starStr(b.rating)}</span></li>`).join("");
     attachTopReadsDnD($("topReadsList"));
     $("topReadsEmpty").style.display = topReads.length ? "none" : "";
 
@@ -2339,15 +2446,20 @@
     $("rereadCandList").innerHTML = rereadCands.map(b=>`<li>${esc(b.title)} <span class="muted">— ${esc(b.author||"")}</span></li>`).join("");
     $("rereadCandEmpty").style.display = rereadCands.length ? "none" : "";
 
+    // Authors are grouped on a key with case, punctuation and spacing removed, so
+    // "R. J. Barker", "RJ Barker" and "rj barker" count as one person; the list shows the
+    // spelling met first. Rereads are left out, matching "Books Read" on the Stats tab.
     const authorStats = {};
-    data.books.filter(b=>b.status==="read" && b.author).forEach(b=>{
-      const a = b.author;
-      if(!authorStats[a]) authorStats[a] = {count:0, ratingSum:0, ratingCount:0};
-      authorStats[a].count++;
-      if(b.rating){ authorStats[a].ratingSum += b.rating; authorStats[a].ratingCount++; }
+    data.books.filter(b=>b.status==="read" && !b.isReread && b.author).forEach(b=>{
+      // normalizeTitle keeps only a-z/0-9, so a name in a non-Latin script would reduce to
+      // nothing; such names fall back to a plain case-insensitive match.
+      const key = normalizeTitle(b.author).replace(/ /g,"") || b.author.trim().toLowerCase();
+      if(!authorStats[key]) authorStats[key] = {name:b.author, count:0, ratingSum:0, ratingCount:0};
+      authorStats[key].count++;
+      if(b.rating){ authorStats[key].ratingSum += b.rating; authorStats[key].ratingCount++; }
     });
-    const topAuthors = Object.entries(authorStats).map(([name,s])=>({
-      name, count:s.count, avgRating: s.ratingCount ? (s.ratingSum/s.ratingCount) : 0
+    const topAuthors = Object.values(authorStats).map(s=>({
+      name: s.name, count:s.count, avgRating: s.ratingCount ? (s.ratingSum/s.ratingCount) : 0
     })).sort((a,b)=> b.count - a.count || b.avgRating - a.avgRating).slice(0,10);
     $("topAuthorsList").innerHTML = topAuthors.map((a,i)=>`<li><span><span class="rank-num">${i+1}</span>${esc(a.name)}</span><span class="muted">${a.count} book${a.count!==1?"s":""}${a.avgRating?" · avg "+a.avgRating.toFixed(1)+"★":""}</span></li>`).join("");
     $("topAuthorsEmpty").style.display = topAuthors.length ? "none" : "";
@@ -2372,7 +2484,7 @@
   function renderStats(){
     const readBooks = chartsReadBooks();
     const rereadBooks = data.books.filter(b=>b.isReread && b.status==="read");
-    const finishedDates = readBooks.filter(b=>b.dateFinished).map(b=>new Date(b.dateFinished));
+    const finishedDates = readBooks.map(b=>parseYmd(b.dateFinished)).filter(Boolean);
     let booksPerMonth = 0;
     if(finishedDates.length){
       const earliest = new Date(Math.min(...finishedDates.map(d=>d.getTime())));
@@ -2384,8 +2496,10 @@
     const longest = readBooks.reduce((max,b)=> (b.pages||0) > (max?max.pages:0) ? b : max, null);
     let fastest = null, fastestDays = Infinity;
     readBooks.forEach(b=>{
-      if(b.dateStarted && b.dateFinished){
-        const days = (new Date(b.dateFinished) - new Date(b.dateStarted)) / 86400000;
+      const started = parseYmd(b.dateStarted), finished = parseYmd(b.dateFinished);
+      if(started && finished){
+        // Rounded because a span crossing a daylight-saving change is 23 or 25 hours short of whole days.
+        const days = Math.round((finished - started) / 86400000);
         if(days >= 0 && days < fastestDays){ fastestDays = days; fastest = b; }
       }
     });
@@ -2436,7 +2550,9 @@
     const el = e.target.closest("[data-tip]");
     if(!el) return;
     const tip = $("chartTooltip");
-    tip.innerHTML = el.getAttribute("data-tip");
+    // textContent, never innerHTML: getAttribute hands back the tip with esc()'s entities
+    // already decoded, so a tag named "<img onerror=...>" would otherwise become live markup.
+    tip.textContent = el.getAttribute("data-tip");
     tip.classList.add("show");
   });
   document.body.addEventListener("mousemove", (e)=>{
@@ -2621,7 +2737,7 @@
     return Math.ceil(v/mag) * mag; // round up to the next clean step at this value's magnitude
   }
   function renderMonthlyPagesChart(){
-    const books = chartsReadBooks().filter(b=>b.dateFinished && b.pages);
+    const books = chartsReadBooks().filter(b=>parseYmd(b.dateFinished) && b.pages);
     const wrap = $("monthlyPagesChartWrap");
     if(!books.length){
       wrap.innerHTML = `<div class="chart-empty">No read books with both a finish date and a page count yet.</div>`;
@@ -2629,12 +2745,15 @@
     }
     const byMonth = {};
     books.forEach(b=>{
-      const key = monthKey(new Date(b.dateFinished));
+      const key = monthKey(parseYmd(b.dateFinished));
       byMonth[key] = (byMonth[key]||0) + b.pages;
     });
     const keys = Object.keys(byMonth).sort();
-    const firstDate = new Date(keys[0]+"-01");
-    const lastDate = new Date();
+    const firstDate = parseYmd(keys[0]+"-01");
+    // Run to the current month, or to the latest finish if one is dated in the future — an
+    // empty series would otherwise break the drawing code below.
+    const latestFinish = parseYmd(keys[keys.length-1]+"-01");
+    const lastDate = latestFinish > new Date() ? latestFinish : new Date();
     const series = [];
     let cursor = new Date(firstDate.getFullYear(), firstDate.getMonth(), 1);
     const end = new Date(lastDate.getFullYear(), lastDate.getMonth(), 1);
@@ -2698,7 +2817,7 @@
   // by repeating each book once per weight point, so "Up Next" books are three times as
   // likely to be drawn as "Someday" ones, then picks one at random.
   // ---------- RENDER: DISCOVERY ----------
-  function pickForMe(){
+  function pickForMe(resultId){
     const tbr = data.books.filter(b=>b.status==="tbr");
     if(!tbr.length){ toast("Your TBR is empty!"); return; }
     const weighted = [];
@@ -2707,14 +2826,14 @@
       for(let i=0;i<weight;i++) weighted.push(b);
     });
     const pick = weighted[Math.floor(Math.random()*weighted.length)];
-    $("pickForMeResult").innerHTML = `<div class="pick-result">
+    $(resultId).innerHTML = `<div class="pick-result">
       ${coverImg(pick,"cover")}
       <div class="book-title">${esc(pick.title)}</div>
       <div class="book-author">${esc(pick.author||"")}</div>
-      <button class="small" data-action="start-reading" data-id="${pick.id}" style="margin-top:8px;">Start Reading</button>
+      <button class="small" data-action="start-reading" data-id="${esc(pick.id)}" style="margin-top:8px;">Start Reading</button>
     </div>`;
   }
-  $("pickForMeBtn").addEventListener("click", pickForMe);
+  $("pickForMeBtn").addEventListener("click", ()=>pickForMe("pickForMeResult"));
 
   function renderMoodPicker(){
     const sel = $("moodPickerSelect");
@@ -2758,15 +2877,48 @@
     const type = confirm("Use a 5x5 bingo grid? (Cancel = simple checklist)") ? "bingo" : "checklist";
     let items = [];
     if(type==="bingo"){
-      for(let i=0;i<25;i++) items.push({label:"Square "+(i+1), done:false});
+      const raw = prompt("Name up to 25 squares, separated by commas (e.g. Fantasy, Memoir, Book over 500 pages). Leave blank to fill them in later with Edit:");
+      items = bingoItems(splitList(raw), []);
     } else {
       const raw = prompt("Enter goals separated by commas (e.g. Read a 1800s book, Read a translated book, Read 5 nonfiction):");
-      items = (raw||"").split(",").map(s=>s.trim()).filter(Boolean).map(s=>({label:s, done:false}));
+      items = splitList(raw).map(s=>({label:s, done:false}));
     }
     data.challenges.push({ id: uid(), name, type, items });
     saveData();
     renderChallenges();
   });
+
+  // A bingo card always has exactly 25 squares: the given labels fill them in order, and
+  // any left over keep a "Square N" name. Ticks stay with their square position, so
+  // renaming a square does not un-mark it.
+  function bingoItems(labels, oldItems){
+    const items = [];
+    for(let i=0;i<25;i++){
+      items.push({ label: labels[i] || "Square "+(i+1), done: !!(oldItems[i] && oldItems[i].done) });
+    }
+    return items;
+  }
+
+  // Edit renames the challenge and rewrites its squares or goals through the same comma-
+  // separated prompts used to create it. A checklist goal that keeps its exact wording keeps
+  // its tick; a reworded or new goal starts unticked.
+  function editChallenge(ch){
+    const name = prompt("Challenge name:", ch.name);
+    if(name === null) return;
+    const what = ch.type==="bingo" ? "squares (up to 25)" : "goals";
+    const raw = prompt(`Edit the ${what}, separated by commas:`, ch.items.map(i=>i.label).join(", "));
+    if(raw === null) return;
+    ch.name = name.trim() || ch.name;
+    const labels = splitList(raw);
+    if(ch.type==="bingo"){
+      ch.items = bingoItems(labels, ch.items);
+    } else {
+      const wasDone = new Set(ch.items.filter(i=>i.done).map(i=>i.label));
+      ch.items = labels.map(l=>({ label:l, done: wasDone.has(l) }));
+    }
+    saveData();
+    renderChallenges();
+  }
 
   function renderChallenges(){
     const container = $("challengesList");
@@ -2775,15 +2927,18 @@
       const doneCount = ch.items.filter(i=>i.done).length;
       let body;
       if(ch.type==="bingo"){
-        body = `<div class="bingo-grid">${ch.items.map((it,idx)=>`<div class="bingo-cell ${it.done?'done':''}" data-challenge="${ch.id}" data-item="${idx}">${esc(it.label)}</div>`).join("")}</div>`;
+        body = `<div class="bingo-grid">${ch.items.map((it,idx)=>`<div class="bingo-cell ${it.done?'done':''}" data-challenge="${esc(ch.id)}" data-item="${idx}">${esc(it.label)}</div>`).join("")}</div>`;
       } else {
-        body = `<ul style="padding-left:18px; margin:8px 0;">${ch.items.map((it,idx)=>`<li style="margin-bottom:4px;"><label style="font-weight:normal; display:flex; gap:6px; align-items:center;"><input type="checkbox" ${it.done?'checked':''} data-challenge="${ch.id}" data-item="${idx}" style="width:auto;">${esc(it.label)}</label></li>`).join("")}</ul>`;
+        body = `<ul style="padding-left:18px; margin:8px 0;">${ch.items.map((it,idx)=>`<li style="margin-bottom:4px;"><label style="font-weight:normal; display:flex; gap:6px; align-items:center;"><input type="checkbox" ${it.done?'checked':''} data-challenge="${esc(ch.id)}" data-item="${idx}" style="width:auto;">${esc(it.label)}</label></li>`).join("")}</ul>`;
       }
       return `<div class="challenge-card">
         <div class="series-head">
           <h3 style="margin:0;">${esc(ch.name)}</h3>
           <span class="muted">${doneCount} / ${ch.items.length} complete</span>
-          <button class="icon-btn" data-remove-challenge="${ch.id}" title="Delete challenge">✕</button>
+          <span>
+            <button class="small secondary" data-edit-challenge="${esc(ch.id)}">Edit</button>
+            <button class="icon-btn" data-remove-challenge="${esc(ch.id)}" title="Delete challenge">✕</button>
+          </span>
         </div>
         ${body}
       </div>`;
@@ -2799,8 +2954,16 @@
       renderChallenges();
       return;
     }
+    const ed = e.target.closest("[data-edit-challenge]");
+    if(ed){
+      const ch = data.challenges.find(c=>c.id===ed.dataset.editChallenge);
+      if(ch) editChallenge(ch);
+      return;
+    }
     const rm = e.target.closest("[data-remove-challenge]");
     if(rm){
+      const ch = data.challenges.find(c=>c.id===rm.dataset.removeChallenge);
+      if(!ch || !confirm(`Delete the challenge "${ch.name}"? This can't be undone.`)) return;
       data.challenges = data.challenges.filter(c=>c.id!==rm.dataset.removeChallenge);
       saveData();
       renderChallenges();
