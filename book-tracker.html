@@ -1,0 +1,3144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Book Tracker</title>
+<!--
+  Everything for this app lives in this one file: the page structure (HTML) is below,
+  the look (CSS) is in the style block that follows, and all the behaviour (JavaScript)
+  is in the script block near the bottom. Open the file in a browser and it just runs —
+  there is no server, no build step, and no installation.
+-->
+<style>
+  /* CSS custom properties ("variables"). Defining a colour once here and referring to it
+     everywhere else as var(--name) means a colour can be changed in one place. :root is
+     the whole document, so these apply everywhere. */
+  :root{
+    --bg:#f4f5f7; --panel:#ffffff; --border:#d6dae0; --ink:#1b2430; --muted:#5b6675;
+    --accent:#2f6fed; --accent-ink:#ffffff;
+    --gold:#b3541e; --green:#1e8a4c; --red:#c0392b; --chip:#eef1f6;
+    /* chart palette (validated categorical order + sequential blue ramp) */
+    --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a; --series-4:#eda100;
+    --series-5:#e87ba4; --series-6:#008300; --series-7:#4a3aa7; --series-8:#e34948;
+    --chart-surface:#fcfcfb; --chart-grid:#e1e0d9; --chart-axis:#c3c2b7; --chart-muted:#898781;
+    --ordinal-1:#86b6ef; --ordinal-2:#5598e7; --ordinal-3:#2a78d6; --ordinal-4:#1c5cab; --ordinal-5:#104281;
+  }
+  /* Dark mode. The browser tells us the reader's system preference, and we simply
+     redefine the same variable names with darker values — every rule that uses
+     var(--bg), var(--ink) and so on picks up the new colours automatically. */
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#14181f; --panel:#1c222c; --border:#333c4a; --ink:#e7ebf1; --muted:#9aa5b3;
+      --accent:#5b8bf5; --accent-ink:#0d1117;
+      --gold:#d98a4f; --green:#3fbf7f; --red:#e0665a; --chip:#232a35;
+      --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70; --series-4:#c98500;
+      --series-5:#d55181; --series-6:#008300; --series-7:#9085e9; --series-8:#e66767;
+      --chart-surface:#1a1a19; --chart-grid:#2c2c2a; --chart-axis:#383835; --chart-muted:#898781;
+      --ordinal-1:#3987e5; --ordinal-2:#2a78d6; --ordinal-3:#256abf; --ordinal-4:#1c5cab; --ordinal-5:#184f95;
+    }
+  }
+  /* Baseline rules. "*" means every element; box-sizing:border-box makes an element's
+     stated width include its padding and border, which makes layouts far easier. */
+  *{box-sizing:border-box;}
+  body{margin:0; padding:20px; padding-bottom:60px; font-family:"Segoe UI",Arial,sans-serif; background:var(--bg); color:var(--ink);}
+  h1{font-size:1.5rem; margin:0;}
+  h2{font-size:1.1rem; margin:0 0 12px;}
+  h3{font-size:0.98rem; margin:0 0 8px;}
+  a{color:var(--accent);}
+  header.app-head{display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; margin-bottom:6px;}
+  p.sub{color:var(--muted); margin:2px 0 18px; font-size:0.88rem;}
+  .head-actions{display:flex; gap:8px; flex-wrap:wrap;}
+  /* Shared look for buttons and form fields. Classes like .secondary, .danger and .small
+     are modifiers: an element can carry class="secondary small" to combine them. */
+  button, select, input{font-family:inherit;}
+  button{
+    background:var(--accent); color:var(--accent-ink); border:none; border-radius:7px;
+    padding:8px 14px; font-size:0.86rem; font-weight:600; cursor:pointer;
+  }
+  button:hover{filter:brightness(1.08);}
+  button.secondary{background:var(--chip); color:var(--ink); border:1px solid var(--border);}
+  button.danger{background:var(--red); color:#fff;}
+  button.small{padding:4px 9px; font-size:0.76rem; border-radius:6px;}
+  input, select, textarea{
+    border:1px solid var(--border); border-radius:6px; padding:6px 9px; background:var(--panel); color:var(--ink); font-size:0.86rem;
+  }
+  textarea{font-family:inherit; resize:vertical;}
+  /* Tab bar and view switching. Every tab panel is a .view which is hidden by default;
+     only the one that also has the .active class is shown. The JavaScript just moves that
+     .active class around rather than rebuilding the page. */
+  .tabs{display:flex; gap:6px; flex-wrap:wrap; margin:14px 0 18px; border-bottom:1px solid var(--border); padding-bottom:10px;}
+  .tab-btn{background:var(--chip); color:var(--muted); border:1px solid var(--border); border-radius:20px; padding:7px 14px; font-size:0.82rem; font-weight:600; cursor:pointer;}
+  .tab-btn.active{background:var(--accent); color:var(--accent-ink); border-color:var(--accent);}
+  .panel{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin-bottom:16px;}
+  .view{display:none;}
+  .view.active{display:block;}
+  .empty-msg{color:var(--muted); font-size:0.86rem; padding:20px 0; text-align:center;}
+  /* The responsive card grid. auto-fill + minmax() means "fit as many columns of at least
+     220px as will fit, then share out the leftover space" — so it reflows on a phone
+     without any JavaScript or fixed breakpoints. */
+  .grid-cards{display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px;}
+  /* A single book card: cover thumbnail on the left, details on the right. The
+     .placeholder variant is what's shown when a book has no cover image — it displays the
+     book's title as text inside the same sized box. */
+  .book-card{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; gap:10px; position:relative;}
+  .book-card .cover{width:56px; height:80px; flex-shrink:0; border-radius:4px; object-fit:cover; background:var(--chip); border:1px solid var(--border);}
+  .book-card .cover.placeholder{display:flex; align-items:center; justify-content:center; font-size:0.7rem; color:var(--muted); text-align:center; padding:2px;}
+  .book-info{flex:1; min-width:0;}
+  .book-title{font-weight:700; font-size:0.92rem; line-height:1.25; margin-bottom:2px; word-wrap:break-word;}
+  .book-author{color:var(--muted); font-size:0.8rem; margin-bottom:4px;}
+  .badge-row{display:flex; flex-wrap:wrap; gap:4px; margin:4px 0;}
+  .badge{background:var(--chip); border:1px solid var(--border); border-radius:10px; padding:1px 8px; font-size:0.68rem; color:var(--muted); font-weight:600;}
+  .badge.next-up{background:var(--gold); color:#fff; border-color:var(--gold);}
+  .badge.top{background:var(--gold); color:#fff; border-color:var(--gold);}
+  .progress-bar{background:var(--chip); border-radius:6px; height:8px; overflow:hidden; margin:6px 0; border:1px solid var(--border);}
+  .progress-bar > div{background:var(--accent); height:100%;}
+  .stars{color:var(--gold); font-size:0.85rem; letter-spacing:1px;}
+  .card-actions{display:flex; gap:4px; flex-wrap:wrap; margin-top:6px;}
+  .book-card.dragging{opacity:0.4;}
+  .priority-tier{margin-bottom:18px;}
+  .priority-tier h3{color:var(--muted); text-transform:uppercase; font-size:0.78rem; letter-spacing:0.5px;}
+  /* Pop-up dialogs (Add/Edit Book, Bulk Import). The overlay covers the whole screen and
+     is display:none until JavaScript adds the .active class to it. */
+  .modal-overlay{position:fixed; inset:0; background:rgba(0,0,0,0.45); display:none; align-items:flex-start; justify-content:center; z-index:100; overflow:auto; padding:30px 12px;}
+  .modal-overlay.active{display:flex;}
+  .modal{background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:20px; width:100%; max-width:520px; max-height:calc(100vh - 60px); overflow:auto;}
+  .modal h2{margin-bottom:14px;}
+  .form-row{display:flex; flex-direction:column; gap:4px; margin-bottom:10px;}
+  .form-row label{font-size:0.78rem; color:var(--muted); font-weight:600;}
+  .form-row-inline{display:flex; gap:10px;}
+  .form-row-inline .form-row{flex:1;}
+  .modal-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap;}
+  .isbn-row{display:flex; gap:8px;}
+  .isbn-row input{flex:1;}
+  .lookup-status{font-size:0.76rem; color:var(--muted); min-height:1.2em; margin-top:4px;}
+  /* The "search by title" results list inside the Add Book dialog. */
+  .title-results{display:none; flex-direction:column; gap:6px; margin-top:6px; max-height:260px; overflow:auto;}
+  .title-results.open{display:flex;}
+  .title-hit{display:flex; gap:10px; align-items:center; text-align:left; width:100%; padding:6px; background:var(--chip); border:1px solid var(--border); border-radius:6px; cursor:pointer; font:inherit; color:inherit;}
+  .title-hit:hover{border-color:var(--accent);}
+  .title-hit .cover{width:36px; height:52px; flex-shrink:0; border-radius:3px; object-fit:cover; background:var(--panel); border:1px solid var(--border);}
+  .title-hit .cover.placeholder{display:flex; align-items:center; justify-content:center; font-size:0.55rem; color:var(--muted); text-align:center; padding:2px; overflow:hidden;}
+  .title-hit-main{min-width:0; flex:1;}
+  .title-hit-title{font-weight:600; font-size:0.84rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .title-hit-sub{font-size:0.74rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .stat-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px;}
+  .stat-tile{background:var(--chip); border:1px solid var(--border); border-radius:10px; padding:14px; text-align:center;}
+  .stat-tile .num{font-size:1.5rem; font-weight:700; color:var(--accent);}
+  .stat-tile .label{font-size:0.76rem; color:var(--muted); margin-top:2px;}
+
+  /* A checkbox with an explanatory second line, used by the bulk importer. */
+  .bulk-choice{display:flex; gap:8px; align-items:flex-start; font-size:0.84rem; font-weight:600; color:var(--ink); cursor:pointer;}
+  .bulk-choice input{margin-top:3px; flex-shrink:0;}
+  .bulk-choice .hint{display:block; margin-top:3px; font-weight:400; color:var(--muted); font-size:0.78rem;}
+
+  /* ---- profiles ----
+     Each profile is a separate library in the same browser. The chip in the header names
+     whoever is active; the rows inside the Profiles dialog are edited in place. */
+  .profile-bar{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px;}
+  .profile-chip{display:inline-flex; align-items:center; gap:6px; background:var(--chip); border:1px solid var(--border); border-radius:20px; padding:3px 8px 3px 11px;}
+  .profile-chip .avatar{font-size:1rem; line-height:1;}
+  .profile-switch{border:none; background:transparent; color:var(--ink); font-weight:700; font-size:0.84rem; cursor:pointer; padding:2px 2px; max-width:180px;}
+  .profile-row{display:flex; align-items:center; gap:8px; padding:10px; border:1px solid var(--border); border-radius:8px; margin-bottom:8px; background:var(--chip); flex-wrap:wrap;}
+  .profile-row.is-active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);}
+  .profile-row .emoji-input{width:46px; text-align:center; font-size:1rem; padding:6px 2px;}
+  .profile-row .name-input{flex:1; min-width:110px; font-weight:600;}
+  .profile-row .row-meta{width:100%; font-size:0.72rem; color:var(--muted);}
+  .swatches{display:flex; gap:4px;}
+  .swatch{width:20px; height:20px; border-radius:50%; border:2px solid transparent; padding:0; cursor:pointer;}
+  .swatch.sel{border-color:var(--ink);}
+  .send-target{width:100%; text-align:left; margin-bottom:6px;}
+  .compare-cols{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px;}
+  .cmp-list{list-style:none; margin:0; padding:0; max-height:340px; overflow:auto;}
+  .cmp-list li{padding:7px 0; border-bottom:1px solid var(--border);}
+  .cmp-list li:last-child{border-bottom:none;}
+  .cmp-title{font-weight:600; font-size:0.85rem;}
+  .cmp-sub{color:var(--muted); font-size:0.75rem; margin-top:1px;}
+
+  /* ---- charts ---- */
+  .chart-card{margin-bottom:22px;}
+  .chart-head{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;}
+  .chart-head h3{margin:0;}
+  .chart-toggle{background:none; border:1px solid var(--border); color:var(--muted); font-size:0.72rem; font-weight:600; padding:3px 10px; border-radius:12px; cursor:pointer;}
+  .chart-toggle:hover{color:var(--ink); border-color:var(--muted);}
+  .chart-body{position:relative;}
+  .chart-scroll{overflow-x:auto; overflow-y:hidden;}
+  .chart-svg{display:block; overflow:visible;}
+  .chart-svg text{fill:var(--chart-muted); font-size:11px; font-family:"Segoe UI",Arial,sans-serif;}
+  .chart-svg .grid-line{stroke:var(--chart-grid); stroke-width:1;}
+  .chart-svg .axis-line{stroke:var(--chart-axis); stroke-width:1;}
+  .chart-svg .val-label{fill:var(--ink); font-size:11px; font-weight:600;}
+  .chart-legend{display:flex; flex-wrap:wrap; gap:12px; margin-top:10px; font-size:0.78rem; color:var(--muted);}
+  .chart-legend .key{display:inline-flex; align-items:center; gap:5px;}
+  .chart-legend .swatch{width:10px; height:10px; border-radius:2px; display:inline-block; flex-shrink:0;}
+  .chart-empty{color:var(--muted); font-size:0.84rem; padding:16px 4px;}
+  .chart-tooltip{position:fixed; pointer-events:none; background:var(--ink); color:var(--bg); font-size:0.74rem; padding:5px 9px; border-radius:6px; white-space:nowrap; opacity:0; transform:translate(-50%,-100%); transition:opacity 0.1s; z-index:300;}
+  .chart-tooltip.show{opacity:1;}
+  .bar-row{cursor:default;}
+  .bar-row:hover .bar-fill{filter:brightness(1.12);}
+  .donut-slice{cursor:default; transition:opacity 0.1s;}
+  .donut-slice:hover{opacity:0.85;}
+  .chart-table{width:100%; border-collapse:collapse; font-size:0.82rem;}
+  .chart-table th, .chart-table td{padding:5px 10px; text-align:left; border-bottom:1px solid var(--border);}
+  .chart-table th{color:var(--muted); font-weight:600; font-size:0.74rem; text-transform:uppercase;}
+  .chart-table td.num-col, .chart-table th.num-col{text-align:right; font-variant-numeric:tabular-nums;}
+  .filter-row{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; align-items:center;}
+  .series-card{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:10px;}
+  .series-head{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;}
+  /* The Library tab's shelf view. aspect-ratio:2/3 gives every cover the proportions of a
+     real book jacket, so the grid stays tidy even when the images differ in size. */
+  .library-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(118px,1fr)); gap:18px 14px;}
+  .library-item{display:flex; flex-direction:column; gap:6px; min-width:0;}
+  .library-item .cover{width:100%; aspect-ratio:2/3; object-fit:cover; border-radius:6px; background:var(--chip); border:1px solid var(--border);}
+  .library-item .cover.placeholder{display:flex; align-items:center; justify-content:center; text-align:center; font-size:0.7rem; color:var(--muted); padding:6px;}
+  .library-title{font-size:0.8rem; font-weight:600; line-height:1.3;}
+  .library-author{font-size:0.72rem; color:var(--muted); line-height:1.3;}
+  .quote-item{border-left:3px solid var(--accent); padding:6px 10px; margin-bottom:8px; font-size:0.85rem; background:var(--chip); border-radius:0 6px 6px 0;}
+  .quote-item .qmeta{font-size:0.72rem; color:var(--muted); margin-top:3px;}
+  .top-list{list-style:none; padding:0; margin:0;}
+  .top-list li{display:flex; justify-content:space-between; align-items:center; padding:8px 4px; border-bottom:1px solid var(--border); font-size:0.86rem;}
+  .top-list li:last-child{border-bottom:none;}
+  .top-list li[draggable="true"]{cursor:grab;}
+  .top-list li.dragging{opacity:0.4;}
+  .rank-num{display:inline-block; width:22px; height:22px; border-radius:50%; background:var(--accent); color:var(--accent-ink); text-align:center; line-height:22px; font-size:0.72rem; font-weight:700; margin-right:8px;}
+  .two-col{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  @media (max-width:700px){ .two-col{grid-template-columns:1fr;} .form-row-inline{flex-direction:column;} }
+  .pick-result{text-align:center; padding:20px;}
+  .pick-result .cover{width:100px; height:145px; margin:0 auto 12px; display:block; border-radius:6px;}
+  .challenge-card{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:10px;}
+  .bingo-grid{display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-top:10px;}
+  .bingo-cell{border:1px solid var(--border); border-radius:6px; padding:8px 4px; font-size:0.68rem; min-height:60px; display:flex; align-items:center; justify-content:center; text-align:center; cursor:pointer; background:var(--chip);}
+  .bingo-cell.done{background:var(--green); color:#fff; border-color:var(--green);}
+  .toolbar-search{flex:1; min-width:160px;}
+  .muted{color:var(--muted); font-size:0.8rem;}
+  .icon-btn{background:none; border:none; color:var(--muted); cursor:pointer; font-size:0.9rem; padding:2px 4px;}
+  .icon-btn:hover{color:var(--red);}
+  /* The small "Saved" / "Deleted" message that slides in at the bottom of the screen.
+     It is always in the page but invisible (opacity:0) until the .show class is added. */
+  .toast{position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:8px 16px; border-radius:8px; font-size:0.82rem; opacity:0; pointer-events:none; transition:opacity 0.25s; z-index:200;}
+  .toast.show{opacity:1;}
+  /* The bar that appears when "Select Books" mode is switched on. */
+  .selection-bar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:50; font-size:0.85rem;}
+  .select-checkbox{position:absolute; top:6px; left:6px; z-index:2; background:var(--panel); border-radius:4px; padding:2px 3px; border:1px solid var(--border); line-height:0;}
+  .select-checkbox input{width:16px; height:16px; margin:0; cursor:pointer;}
+  .book-card.selected{outline:2px solid var(--accent); outline-offset:-2px;}
+</style>
+</head>
+<body>
+
+<!-- Page header: the title plus the global action buttons. Note the two <input
+     type="file"> elements are hidden; the visible buttons click them via JavaScript,
+     because file inputs are hard to style directly. -->
+<header class="app-head">
+  <div>
+    <h1>📚 Book Tracker</h1>
+    <!-- Profile switcher. The <select> is the switch itself, so changing profile is one
+         click; everything else about profiles lives behind "Manage Profiles". -->
+    <div class="profile-bar">
+      <span class="profile-chip">
+        <span class="avatar" id="activeProfileEmoji">📚</span>
+        <select id="profileSelect" class="profile-switch" title="Switch profile"></select>
+      </span>
+      <button class="secondary small" id="manageProfilesBtn">Manage Profiles</button>
+    </div>
+  </div>
+  <div class="head-actions">
+    <button id="addBookBtn">+ Add Book</button>
+    <button class="secondary small" id="selectModeBtn">Select Books</button>
+    <button class="secondary small" id="exportBtn">Export</button>
+    <button class="secondary small" id="importBtn">Import</button>
+    <button class="secondary small" id="backupAllBtn">Backup All Profiles</button>
+    <button class="secondary small" id="bulkIsbnBtn">Bulk Import (CSV/ISBNs)</button>
+    <input type="file" id="importFile" accept=".json" style="display:none;">
+    <input type="file" id="bulkIsbnFile" accept=".csv,.txt" style="display:none;">
+  </div>
+</header>
+<p class="sub">Self-contained local library tracker — TBR, currently reading, read history, series, stats, and recommendations. Each profile keeps its own library; all of them are saved in this browser's local storage on this machine.</p>
+
+<!-- Bulk-selection toolbar. Hidden until "Select Books" is pressed. -->
+<div class="panel selection-bar" id="selectionBar" style="display:none;">
+  <span><strong id="selectionCount">0</strong> selected</span>
+  <button class="secondary small" id="selectAllVisibleBtn">Select all visible</button>
+  <button class="secondary small" id="clearSelectionBtn">Clear</button>
+  <button class="secondary small" id="checkCoversBtn">Check for Covers</button>
+  <button class="secondary small" id="clearCoversBtn">Clear Covers</button>
+  <button class="danger small" id="deleteSelectedBtn">Delete Selected</button>
+  <button class="secondary small" id="exitSelectModeBtn">Done</button>
+</div>
+
+<!-- The tab buttons. Each carries a data-view attribute naming the panel it reveals,
+     e.g. data-view="tbr" shows the element with id="view-tbr". A "data-" attribute is a
+     custom value you can attach to any element and read back from JavaScript. -->
+<div class="tabs" id="tabBar">
+  <button class="tab-btn active" data-view="tbr">TBR</button>
+  <button class="tab-btn" data-view="reading">Currently Reading</button>
+  <button class="tab-btn" data-view="read">Read</button>
+  <button class="tab-btn" data-view="dnf">DNF Pile</button>
+  <button class="tab-btn" data-view="series">Series</button>
+  <button class="tab-btn" data-view="rankings">Rankings & Favorites</button>
+  <button class="tab-btn" data-view="stats">Stats & Pace</button>
+  <button class="tab-btn" data-view="discovery">Discovery</button>
+  <button class="tab-btn" data-view="library">Library</button>
+</div>
+
+<!-- TBR VIEW -->
+<div class="view active" id="view-tbr">
+  <div class="panel" id="nextUpPanel" style="display:none;">
+    <h3>📌 Next Up Suggestions (from finished series)</h3>
+    <div class="grid-cards" id="nextUpCards"></div>
+  </div>
+  <div class="panel">
+    <div class="filter-row">
+      <input type="text" class="toolbar-search" id="tbrSearch" placeholder="Search title or author...">
+      <select id="tbrShelfFilter"><option value="">All shelves</option></select>
+      <select id="tbrGenreFilter"><option value="">All genres/moods</option></select>
+      <button class="secondary small" id="pickForMeFromTbrBtn">🎲 Pick for me</button>
+    </div>
+    <div class="priority-tier">
+      <h3>Up Next</h3>
+      <div class="grid-cards" id="tbrUpNext"></div>
+      <div class="empty-msg" id="tbrUpNextEmpty" style="display:none;">Nothing marked "up next" yet. Add a book or promote one from Someday.</div>
+    </div>
+    <div class="priority-tier">
+      <h3>Someday</h3>
+      <div class="grid-cards" id="tbrSomeday"></div>
+      <div class="empty-msg" id="tbrSomedayEmpty" style="display:none;">Nothing here.</div>
+    </div>
+  </div>
+</div>
+
+<!-- READING VIEW -->
+<div class="view" id="view-reading">
+  <div class="panel">
+    <div class="grid-cards" id="readingCards"></div>
+    <div class="empty-msg" id="readingEmpty" style="display:none;">Nothing in progress. Move a book from TBR to start reading.</div>
+  </div>
+</div>
+
+<!-- READ VIEW -->
+<div class="view" id="view-read">
+  <div class="panel">
+    <div class="filter-row">
+      <input type="text" class="toolbar-search" id="readSearch" placeholder="Search title or author...">
+      <select id="readSortBy">
+        <option value="dateFinished-desc">Newest finished</option>
+        <option value="dateFinished-asc">Oldest finished</option>
+        <option value="rating-desc">Highest rated</option>
+        <option value="title-asc">Title A-Z</option>
+      </select>
+      <label style="display:flex; align-items:center; gap:5px; font-size:0.8rem; font-weight:normal;"><input type="checkbox" id="showRereadsOnly" style="width:auto;">Rereads only</label>
+    </div>
+    <div class="grid-cards" id="readCards"></div>
+    <div class="empty-msg" id="readEmpty" style="display:none;">No finished books yet.</div>
+  </div>
+</div>
+
+<!-- DNF VIEW -->
+<div class="view" id="view-dnf">
+  <div class="panel">
+    <div class="grid-cards" id="dnfCards"></div>
+    <div class="empty-msg" id="dnfEmpty" style="display:none;">No DNFs — nice.</div>
+  </div>
+</div>
+
+<!-- SERIES VIEW -->
+<div class="view" id="view-series">
+  <div class="panel">
+    <h2>Series Progress</h2>
+    <div id="seriesList"></div>
+    <div class="empty-msg" id="seriesEmpty" style="display:none;">No series tracked yet. Add a series name when adding/editing a book.</div>
+  </div>
+</div>
+
+<!-- RANKINGS VIEW -->
+<div class="view" id="view-rankings">
+  <div class="two-col">
+    <div class="panel">
+      <h2>🏆 Top 5 Reads</h2>
+      <p class="muted">Mark books as a top read from the Read tab. Drag to reorder.</p>
+      <ul class="top-list" id="topReadsList"></ul>
+      <div class="empty-msg" id="topReadsEmpty" style="display:none;">No top reads marked yet.</div>
+    </div>
+    <div class="panel">
+      <h2>🔁 Reread Candidates</h2>
+      <ul class="top-list" id="rereadCandList"></ul>
+      <div class="empty-msg" id="rereadCandEmpty" style="display:none;">No reread candidates flagged.</div>
+    </div>
+    <div class="panel">
+      <h2>✍️ Top Authors</h2>
+      <ul class="top-list" id="topAuthorsList"></ul>
+      <div class="empty-msg" id="topAuthorsEmpty" style="display:none;">Finish a few books to see top authors.</div>
+    </div>
+    <div class="panel">
+      <h2>📖 Top Series</h2>
+      <ul class="top-list" id="topSeriesList"></ul>
+      <div class="empty-msg" id="topSeriesEmpty" style="display:none;">No series data yet.</div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>💬 Favorite Quotes & Highlights</h2>
+    <div id="quotesList"></div>
+    <div class="empty-msg" id="quotesEmpty" style="display:none;">No quotes saved yet. Add them from a book's edit screen.</div>
+  </div>
+</div>
+
+<!-- STATS VIEW -->
+<div class="view" id="view-stats">
+  <div class="panel">
+    <h2>Reading Pace</h2>
+    <div class="stat-grid" id="statGrid"></div>
+  </div>
+
+  <div class="panel">
+    <p class="muted" style="margin-top:0;">The charts below reflect books marked <strong>Read</strong> (first reads only, not rereads).</p>
+
+    <div class="chart-card">
+      <div class="chart-head">
+        <h3>Fiction vs Nonfiction</h3>
+        <button class="chart-toggle" data-chart-toggle="fiction">View as table</button>
+      </div>
+      <div class="chart-body" id="fictionChartWrap"></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-head">
+        <h3>Page Length Distribution</h3>
+        <button class="chart-toggle" data-chart-toggle="pagerange">View as table</button>
+      </div>
+      <div class="chart-body" id="pageRangeChartWrap"></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-head">
+        <h3>Books by Genre / Tag</h3>
+        <button class="chart-toggle" data-chart-toggle="genre">View as table</button>
+      </div>
+      <div class="chart-body" id="genreChartWrap"></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-head">
+        <h3>Pages Read per Month</h3>
+        <button class="chart-toggle" data-chart-toggle="monthly">View as table</button>
+      </div>
+      <div class="chart-body" id="monthlyPagesChartWrap"></div>
+    </div>
+  </div>
+</div>
+
+<!-- DISCOVERY VIEW -->
+<div class="view" id="view-discovery">
+  <div class="two-col">
+    <div class="panel">
+      <h2>🎲 Pick For Me</h2>
+      <p class="muted">Randomly picks from your TBR, weighted toward "Up Next" priority.</p>
+      <button id="pickForMeBtn">Pick a book</button>
+      <div id="pickForMeResult"></div>
+    </div>
+    <div class="panel">
+      <h2>🌙 Mood-Based Picks</h2>
+      <select id="moodPickerSelect" style="width:100%; margin-bottom:10px;"></select>
+      <div class="grid-cards" id="moodPickResults"></div>
+      <div class="empty-msg" id="moodPickEmpty" style="display:none;">No TBR books tagged with this mood yet.</div>
+    </div>
+  </div>
+  <!-- Cross-profile comparison: turns the other people on this machine into a
+       recommendation source. -->
+  <div class="panel">
+    <div class="series-head">
+      <h2>👥 Compare With Another Profile</h2>
+      <select id="compareSelect"></select>
+    </div>
+    <p class="muted">What the two of you have both read, and what they rated highly that you have not picked up.</p>
+    <div class="compare-cols" id="compareCols"></div>
+    <div class="empty-msg" id="compareEmpty" style="display:none;">Add a second profile to compare libraries.</div>
+  </div>
+  <div class="panel">
+    <h2>✨ Recommended For You</h2>
+    <p class="muted">Based on your highest-rated genres/moods among finished books, matched against your TBR.</p>
+    <div class="grid-cards" id="recsCards"></div>
+    <div class="empty-msg" id="recsEmpty" style="display:none;">Rate a few finished books and tag genres/moods to unlock recommendations.</div>
+  </div>
+  <div class="panel">
+    <div class="series-head">
+      <h2>🎯 Reading Challenges</h2>
+      <button class="secondary small" id="addChallengeBtn">+ New Challenge</button>
+    </div>
+    <div id="challengesList"></div>
+    <div class="empty-msg" id="challengesEmpty" style="display:none;">No challenges yet — try a genre bingo or a decade challenge.</div>
+  </div>
+</div>
+
+<!-- LIBRARY VIEW: every book as a cover grid, with no badges or buttons — a browsing
+     view rather than a management one. -->
+<div class="view" id="view-library">
+  <div class="panel">
+    <div class="series-head">
+      <h2>📚 Library</h2>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span class="muted" id="libraryCount"></span>
+        <select id="librarySort">
+          <option value="title">Sort: Title A–Z</option>
+          <option value="author">Sort: Author A–Z</option>
+        </select>
+      </div>
+    </div>
+    <div class="library-grid" id="libraryGrid"></div>
+    <div class="empty-msg" id="libraryEmpty" style="display:none;">No books yet.</div>
+  </div>
+</div>
+
+<!-- ADD/EDIT BOOK MODAL -->
+<div class="modal-overlay" id="bookModalOverlay">
+  <div class="modal">
+    <h2 id="bookModalTitle">Add Book</h2>
+    <div class="form-row">
+      <label>ISBN lookup (auto-fill title, author, cover, pages)</label>
+      <div class="isbn-row">
+        <input type="text" id="isbnInput" placeholder="e.g. 9780143127550">
+        <button type="button" class="secondary" id="isbnLookupBtn">Lookup</button>
+      </div>
+      <div class="lookup-status" id="lookupStatus"></div>
+    </div>
+    <div class="form-row">
+      <label>Or search by title (pick the right match)</label>
+      <div class="isbn-row">
+        <input type="text" id="titleSearchInput" placeholder="e.g. Warlords of Wyrdwood">
+        <button type="button" class="secondary" id="titleSearchBtn">Search</button>
+      </div>
+      <div class="lookup-status" id="titleSearchStatus"></div>
+      <div class="title-results" id="titleSearchResults"></div>
+    </div>
+    <div class="form-row-inline">
+      <div class="form-row">
+        <label>Title *</label>
+        <input type="text" id="fieldTitle">
+      </div>
+      <div class="form-row">
+        <label>Author</label>
+        <input type="text" id="fieldAuthor">
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Cover image URL</label>
+      <input type="text" id="fieldCover" placeholder="https://...">
+    </div>
+    <div class="form-row-inline">
+      <div class="form-row">
+        <label>Series name</label>
+        <input type="text" id="fieldSeriesName" placeholder="e.g. Wheel of Time">
+      </div>
+      <div class="form-row" style="max-width:120px;">
+        <label># in series</label>
+        <input type="number" id="fieldSeriesNum" min="0" step="0.5">
+      </div>
+    </div>
+    <div class="form-row-inline">
+      <div class="form-row">
+        <label>Format</label>
+        <select id="fieldFormat">
+          <option value="physical">Physical</option>
+          <option value="ebook">Ebook</option>
+          <option value="audiobook">Audiobook</option>
+        </select>
+      </div>
+      <div class="form-row" style="max-width:120px;">
+        <label>Pages</label>
+        <input type="number" id="fieldPages" min="0">
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Status</label>
+      <select id="fieldStatus">
+        <option value="tbr">To Be Read</option>
+        <option value="reading">Currently Reading</option>
+        <option value="read">Read</option>
+        <option value="dnf">Did Not Finish</option>
+      </select>
+    </div>
+    <div class="form-row" id="priorityRow">
+      <label>TBR Priority</label>
+      <select id="fieldPriority">
+        <option value="next">Up Next</option>
+        <option value="someday">Someday</option>
+      </select>
+    </div>
+    <div class="form-row" id="progressRow" style="display:none;">
+      <label>Progress % <span id="progressVal">0%</span></label>
+      <input type="range" id="fieldProgress" min="0" max="100" value="0">
+    </div>
+    <div class="form-row" id="datesRow" style="display:none;">
+      <div class="form-row-inline">
+        <div class="form-row"><label>Date started</label><input type="date" id="fieldDateStarted"></div>
+        <div class="form-row"><label>Date finished</label><input type="date" id="fieldDateFinished"></div>
+      </div>
+    </div>
+    <div class="form-row" id="ratingRow" style="display:none;">
+      <label>Rating</label>
+      <select id="fieldRating">
+        <option value="0">No rating</option>
+        <option value="1">★☆☆☆☆</option>
+        <option value="2">★★☆☆☆</option>
+        <option value="3">★★★☆☆</option>
+        <option value="4">★★★★☆</option>
+        <option value="5">★★★★★</option>
+      </select>
+    </div>
+    <div class="form-row" id="notesRow" style="display:none;">
+      <label>Notes / comments</label>
+      <textarea id="fieldNotes" rows="3"></textarea>
+    </div>
+    <div class="form-row" id="dnfReasonRow" style="display:none;">
+      <label>Reason for dropping</label>
+      <input type="text" id="fieldDnfReason">
+    </div>
+    <div class="form-row" id="flagsRow" style="display:none;">
+      <label>Flags</label>
+      <div style="display:flex; gap:14px; flex-wrap:wrap; font-size:0.82rem;">
+        <label style="font-weight:normal; display:flex; gap:5px; align-items:center;"><input type="checkbox" id="fieldIsTop" style="width:auto;">Top 5 read</label>
+        <label style="font-weight:normal; display:flex; gap:5px; align-items:center;"><input type="checkbox" id="fieldIsRereadCandidate" style="width:auto;">Reread candidate</label>
+        <label style="font-weight:normal; display:flex; gap:5px; align-items:center;"><input type="checkbox" id="fieldIsReread" style="width:auto;">This is a reread</label>
+      </div>
+    </div>
+    <div class="form-row" id="quotesRow" style="display:none;">
+      <label>Favorite quotes (one per line, optionally "text || page")</label>
+      <textarea id="fieldQuotes" rows="3" placeholder="A quote goes here || 42"></textarea>
+    </div>
+    <div class="form-row">
+      <label>Shelves (comma-separated, e.g. owned-unread, loaned-out)</label>
+      <input type="text" id="fieldShelves">
+    </div>
+    <div class="form-row">
+      <label>Genre / mood tags (comma-separated)</label>
+      <input type="text" id="fieldTags">
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="danger" id="deleteBookBtn" style="display:none; margin-right:auto;">Delete</button>
+      <button type="button" class="secondary" id="cancelBookBtn">Cancel</button>
+      <button type="button" id="saveBookBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- BULK ISBN IMPORT MODAL -->
+<div class="modal-overlay" id="bulkModalOverlay">
+  <div class="modal">
+    <h2 id="bulkModalTitle">Bulk Import ISBNs</h2>
+    <div id="bulkPreviewStage">
+      <p class="muted">Found <span id="bulkFoundCount">0</span> new book(s) in the file. Accepts a plain list of ISBNs, or a CSV with title/author/isbn columns in any order. New books are added to your TBR and looked up one at a time via Open Library / Google Books.</p>
+      <!-- Shown only when rows carry BOTH an ISBN and a title. That is genuinely
+           ambiguous: the file cannot say whether the two describe the same book (a
+           normal catalogue export) or two unrelated ones (two lists side by side),
+           so the reader decides. -->
+      <div class="form-row" id="bulkSplitRow" style="display:none;">
+        <label class="bulk-choice">
+          <input type="checkbox" id="bulkSplitColumns">
+          <span>
+            Title and ISBN columns are separate lists
+            <span class="hint" id="bulkSplitHint"></span>
+          </span>
+        </label>
+      </div>
+      <div class="form-row">
+        <label>Add as</label>
+        <select id="bulkPriority">
+          <option value="someday">Someday</option>
+          <option value="next">Up Next</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" id="bulkCancelBtn">Cancel</button>
+        <button type="button" id="bulkStartBtn">Start Import</button>
+      </div>
+    </div>
+    <div id="bulkProgressStage" style="display:none;">
+      <div class="progress-bar" style="height:12px;"><div id="bulkProgressBar" style="width:0%"></div></div>
+      <p class="muted" id="bulkProgressLabel">Starting...</p>
+      <div id="bulkLog" style="max-height:220px; overflow:auto; font-size:0.78rem; border:1px solid var(--border); border-radius:6px; padding:8px; background:var(--chip);"></div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" id="bulkStopBtn">Stop</button>
+        <button type="button" id="bulkDoneBtn" style="display:none;">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PROFILES DIALOG. Names, emoji and colour are edited in place: there is no Save
+     button because each keystroke is written straight to storage. -->
+<div class="modal-overlay" id="profileOverlay">
+  <div class="modal">
+    <h2>👥 Profiles</h2>
+    <p class="muted">Every profile keeps its own books, series, challenges and stats. Edit a name, emoji or colour below and it saves as you type.</p>
+    <div id="profileList"></div>
+    <div class="form-row" style="margin-top:14px;">
+      <label for="newProfileName">Add a profile</label>
+      <div class="isbn-row">
+        <input id="newProfileName" placeholder="Name" maxlength="40">
+        <button id="addProfileBtn">+ Add</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="secondary" id="closeProfilesBtn">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- SEND TO PROFILE DIALOG. Opened from the "Send to..." button on a book card. -->
+<div class="modal-overlay" id="sendOverlay">
+  <div class="modal" style="max-width:400px;">
+    <h2>📤 Send to another profile</h2>
+    <p class="muted" id="sendBookLabel"></p>
+    <div id="sendTargets"></div>
+    <div class="modal-actions">
+      <button type="button" class="secondary" id="sendCancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Two floating elements reused across the whole app: the toast message and the
+     hover tooltip used by the charts. -->
+<div class="toast" id="toast"></div>
+<div class="chart-tooltip" id="chartTooltip"></div>
+
+<script>
+// The whole program is wrapped in a function that is defined and immediately called
+// (the "(function(){ ... })();" at the very bottom). Everything declared inside is
+// private to it, so none of these names can clash with anything else on the page.
+// "use strict" opts into stricter error checking, e.g. typos in variable names throw
+// instead of silently creating a global.
+(function(){
+  "use strict";
+
+  // ---------- STATE & STORAGE ----------
+  // Two levels here. `store` holds every profile on this machine; `data` is the library
+  // belonging to whichever profile is currently open — one object of books and challenges.
+  // `data` is a direct reference into the active profile, which is the point: every other
+  // function in this file goes on reading and writing `data.books` exactly as it did when
+  // there was only one library, and never has to know that profiles exist.
+  // It all lives in localStorage, a per-browser store that survives closing the tab.
+  // Nothing is sent anywhere — the libraries live only in this browser.
+  const STORAGE_KEY = "bookTrackerProfiles_v1";
+  const LEGACY_KEY  = "bookTrackerData_v1";   // what single-library versions of this file used
+  // Fixed palette rather than a free colour picker, so every profile colour is one that
+  // stays legible as the app's accent in both light and dark mode.
+  const PROFILE_COLORS = ["#2f6fed","#1e8a4c","#b3541e","#7c3aed","#c0392b","#0e7490","#be185d","#4b5563"];
+
+  let store = loadStore();
+  let data = activeProfile().data;
+  let selectionMode = false;
+  const selectedIds = new Set();
+  // Shorthand used throughout: $("fieldTitle") is just document.getElementById("fieldTitle").
+  // splitList turns "fantasy, epic" into ["fantasy","epic"], dropping blanks.
+  const $ = id => document.getElementById(id);
+  const splitList = str => String(str||"").split(",").map(s=>s.trim()).filter(Boolean);
+
+  function blankLibrary(){ return { books: [], challenges: [] }; }
+
+  // One shape for a profile, so every place that creates one agrees on the fields.
+  function makeProfile(name, overrides){
+    return Object.assign({
+      id: "p_" + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+      name: name || "New Profile",
+      emoji: "📚",
+      color: PROFILE_COLORS[0],
+      created: new Date().toISOString().slice(0,10),
+      data: blankLibrary()
+    }, overrides||{});
+  }
+
+  // Reading from storage can fail (corrupted value, or a browser blocking site data), so
+  // it is wrapped in try/catch and falls back to a fresh profile rather than crashing.
+  function loadStore(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw){
+        const parsed = JSON.parse(raw);
+        if(parsed && Array.isArray(parsed.profiles) && parsed.profiles.length) return normalizeStore(parsed);
+      }
+    }catch(e){ console.warn("Could not load profiles", e); }
+    // Nothing usable under the profiles key. If a library from a single-profile version of
+    // this file is still sitting in localStorage, adopt it as the first profile instead of
+    // starting empty — nobody should lose a library to an upgrade.
+    let legacy = null;
+    try{
+      const raw = localStorage.getItem(LEGACY_KEY);
+      if(raw) legacy = JSON.parse(raw);
+    }catch(e){ console.warn("Could not read pre-profiles data", e); }
+    const first = (legacy && Array.isArray(legacy.books))
+      ? makeProfile("My Library", { data: legacy })
+      : makeProfile("My Library");
+    return { activeId: first.id, profiles: [first] };
+  }
+
+  // Guards against a hand-edited or half-written file: every profile gets the fields the
+  // rest of the app assumes exist, and activeId is forced to name a profile that is
+  // actually present. Called on load and on restoring a backup.
+  function normalizeStore(st){
+    st.profiles.forEach(p=>{
+      if(!p.id) p.id = makeProfile().id;
+      if(!p.name) p.name = "Unnamed";
+      if(!p.emoji) p.emoji = "📚";
+      if(!p.color) p.color = PROFILE_COLORS[0];
+      if(!p.data || !Array.isArray(p.data.books)) p.data = blankLibrary();
+      if(!Array.isArray(p.data.challenges)) p.data.challenges = [];
+    });
+    if(!st.profiles.some(p=>p.id===st.activeId)) st.activeId = st.profiles[0].id;
+    return st;
+  }
+
+  function activeProfile(){
+    return store.profiles.find(p=>p.id===store.activeId) || store.profiles[0];
+  }
+  function profileById(id){ return store.profiles.find(p=>p.id===id); }
+
+  // Writes the whole set of profiles. The first line re-attaches `data` to the active
+  // profile before saving: Import replaces `data` with a whole new object, and without
+  // this that replacement would never reach storage.
+  function saveData(){
+    activeProfile().data = data;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+  }
+  // Every book needs a unique id. Timestamp + random suffix is plenty for a local app.
+  function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+  // One shape for a book record, so the Add/Edit form and the bulk importer cannot drift
+  // apart on which fields a new book gets.
+  function makeBook(overrides){
+    return Object.assign({
+      id: uid(), isbn:"", title:"", author:"", cover:"", series:null, format:"physical",
+      pages:null, status:"tbr", priority:"someday", progress:0, dateStarted:null,
+      dateFinished:null, rating:0, notes:"", dnfReason:"", isTopRead:false,
+      isRereadCandidate:false, isReread:false, quotes:[], shelves:[], tags:[],
+      dateAdded: new Date().toISOString().slice(0,10)
+    }, overrides);
+  }
+
+  // Shows the little pop-up message. The clearTimeout/setTimeout pair means a second
+  // message restarts the timer instead of the first one hiding it early.
+  function toast(msg){
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toast._h);
+    toast._h = setTimeout(()=>t.classList.remove("show"), 2200);
+  }
+
+  // IMPORTANT: escapes text before it is inserted into the page as HTML.
+  // Most of this app builds HTML by joining strings together, so a book title containing
+  // something like "<b>" or a quote mark would otherwise be interpreted as markup and
+  // break the layout (or worse). esc() converts those characters into harmless entities.
+  // Rule of thumb: any user- or API-supplied text placed into HTML goes through esc().
+  function esc(s){
+    return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  // ---------- TABS ----------
+  // One listener on the whole tab bar rather than one per button ("event delegation"):
+  // the click bubbles up, and e.target.closest(".tab-btn") finds which button was hit.
+  // Switching tabs only moves the .active class between panels; nothing is reloaded.
+  $("tabBar").addEventListener("click", (e)=>{
+    const btn = e.target.closest(".tab-btn");
+    if(!btn) return;
+    document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+    $("view-"+btn.dataset.view).classList.add("active");
+    renderAll();
+  });
+
+  // ---------- MASS SELECT / DELETE ----------
+  function updateSelectionBar(){
+    $("selectionCount").textContent = selectedIds.size;
+  }
+  // Selection mode turns the checkboxes on the cards on or off. Because the cards are
+  // re-created from scratch on every render, the ids of the selected books are tracked
+  // separately in the `selectedIds` set rather than on the elements themselves.
+  function setSelectionMode(on){
+    selectionMode = on;
+    $("selectModeBtn").textContent = on ? "Cancel Select" : "Select Books";
+    $("selectionBar").style.display = on ? "flex" : "none";
+    if(!on) selectedIds.clear();
+    updateSelectionBar();
+    renderAll();
+  }
+  $("selectModeBtn").addEventListener("click", ()=>setSelectionMode(!selectionMode));
+  $("exitSelectModeBtn").addEventListener("click", ()=>setSelectionMode(false));
+  $("clearSelectionBtn").addEventListener("click", ()=>{
+    selectedIds.clear();
+    updateSelectionBar();
+    renderAll();
+  });
+  $("selectAllVisibleBtn").addEventListener("click", ()=>{
+    const activeView = document.querySelector(".view.active");
+    if(!activeView) return;
+    activeView.querySelectorAll(".book-card[data-id]").forEach(card=>selectedIds.add(card.dataset.id));
+    updateSelectionBar();
+    renderAll();
+  });
+  $("deleteSelectedBtn").addEventListener("click", ()=>{
+    if(!selectedIds.size){ toast("Nothing selected"); return; }
+    if(!confirm(`Delete ${selectedIds.size} selected book(s)? This can't be undone.`)) return;
+    data.books = data.books.filter(b=>!selectedIds.has(b.id));
+    const count = selectedIds.size;
+    selectedIds.clear();
+    saveData();
+    updateSelectionBar();
+    renderAll();
+    toast(`Deleted ${count} book(s)`);
+  });
+  $("checkCoversBtn").addEventListener("click", async ()=>{
+    if(!selectedIds.size){ toast("Nothing selected"); return; }
+    const targets = data.books.filter(b=>selectedIds.has(b.id));
+    const btn = $("checkCoversBtn");
+    btn.disabled = true;
+    let updated = 0, stalled = 0;
+    for(let i=0; i<targets.length; i++){
+      const book = targets[i];
+      btn.textContent = `Checking ${i+1}/${targets.length}...`;
+      // Only a definite verdict is acted on. If the existing cover merely timed out, the
+      // book is left exactly as it is - replacing a cover on the strength of a slow
+      // connection is precisely how correct covers got overwritten with wrong ones.
+      const state = book.cover ? await probeCover(book.cover) : COVER_MISSING;
+      if(state === COVER_OK) continue;
+      if(state === COVER_TIMEOUT){ stalled++; continue; }
+      let result = null;
+      if(book.isbn){
+        result = await fetchIsbnData(book.isbn.replace(/[^0-9Xx]/g,""));
+      }
+      if((!result || !result.cover) && book.title){
+        result = await fetchByTitleAuthor(book.title, book.author||"");
+      }
+      if(result && result.cover && result.cover !== book.cover){
+        book.cover = result.cover;
+        updated++;
+      }
+    }
+    btn.disabled = false;
+    btn.textContent = "Check for Covers";
+    if(updated) saveData();
+    renderAll();
+    toast(stalled
+      ? `${updated} updated, ${stalled} left alone - too slow to verify. Retry on a faster connection.`
+      : (updated ? `Found ${updated} new cover(s)` : "No new covers found"));
+  });
+  // Recovery for covers saved from a bad lookup. Because Check for Covers now leaves any
+  // working cover alone, a wrong-but-loadable cover would otherwise stick forever; blanking
+  // it lets the next check resolve that book from scratch.
+  $("clearCoversBtn").addEventListener("click", ()=>{
+    if(!selectedIds.size){ toast("Nothing selected"); return; }
+    const targets = data.books.filter(b=>selectedIds.has(b.id) && b.cover);
+    if(!targets.length){ toast("No covers to clear"); return; }
+    if(!confirm(`Clear the cover on ${targets.length} selected book(s)? They will show a placeholder until you run Check for Covers again.`)) return;
+    targets.forEach(b=>{ b.cover = ""; });
+    saveData();
+    renderAll();
+    toast(`Cleared ${targets.length} cover(s)`);
+  });
+  document.body.addEventListener("change", (e)=>{
+    const cb = e.target.closest("input[data-select-id]");
+    if(!cb) return;
+    const id = cb.dataset.selectId;
+    if(cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+    const card = cb.closest(".book-card");
+    if(card) card.classList.toggle("selected", cb.checked);
+    updateSelectionBar();
+  });
+
+  // ---------- BOOK MODAL ----------
+  const overlay = $("bookModalOverlay");
+  let editingId = null;
+
+  // ---------- ADD / EDIT DIALOG ----------
+  // openModal(book) fills the form from a book and shows the dialog; openModal(null)
+  // opens it blank to add a new one. `editingId` remembers which book is being edited so
+  // Save knows whether to replace an existing record or append a new one.
+  function openModal(book){
+    // An empty object stands in for "adding", so every field reads its value the same way
+    // whether or not there is a book. Status and priority are the exceptions: a new book
+    // starts at tbr/next rather than inheriting a blank.
+    const b = book || {};
+    editingId = book ? book.id : null;
+    $("bookModalTitle").textContent = book ? "Edit Book" : "Add Book";
+    $("isbnInput").value = b.isbn||"";
+    $("lookupStatus").textContent = "";
+    clearTitleSearch();
+    $("fieldTitle").value = b.title||"";
+    $("fieldAuthor").value = b.author||"";
+    $("fieldCover").value = b.cover||"";
+    $("fieldSeriesName").value = (b.series&&b.series.name)||"";
+    $("fieldSeriesNum").value = (b.series && b.series.num!=null) ? b.series.num : "";
+    $("fieldFormat").value = b.format||"physical";
+    $("fieldPages").value = b.pages!=null ? b.pages : "";
+    $("fieldStatus").value = book ? book.status : "tbr";
+    $("fieldPriority").value = book ? (book.priority||"someday") : "next";
+    $("fieldProgress").value = b.progress||0;
+    $("progressVal").textContent = (b.progress||0) + "%";
+    $("fieldDateStarted").value = b.dateStarted||"";
+    $("fieldDateFinished").value = b.dateFinished||"";
+    $("fieldRating").value = b.rating||0;
+    $("fieldNotes").value = b.notes||"";
+    $("fieldDnfReason").value = b.dnfReason||"";
+    $("fieldIsTop").checked = !!b.isTopRead;
+    $("fieldIsRereadCandidate").checked = !!b.isRereadCandidate;
+    $("fieldIsReread").checked = !!b.isReread;
+    $("fieldQuotes").value = (b.quotes||[]).map(q=> q.page ? (q.text+" || "+q.page) : q.text).join("\n");
+    $("fieldShelves").value = (b.shelves||[]).join(", ");
+    $("fieldTags").value = (b.tags||[]).join(", ");
+    $("deleteBookBtn").style.display = book ? "inline-block" : "none";
+    updateStatusDependentFields();
+    overlay.classList.add("active");
+  }
+  function closeModal(){
+    overlay.classList.remove("active");
+    editingId = null;
+  }
+  $("addBookBtn").addEventListener("click", ()=>openModal(null));
+  $("cancelBookBtn").addEventListener("click", closeModal);
+  overlay.addEventListener("click", (e)=>{ if(e.target === overlay) closeModal(); });
+
+  // The dialog shows different fields depending on the status: a finished book needs a
+  // rating and dates, a book in progress needs a progress slider, and so on. Setting
+  // style.display to "" restores the element's normal display rather than forcing a value.
+  function updateStatusDependentFields(){
+    const status = $("fieldStatus").value;
+    $("priorityRow").style.display = status==="tbr" ? "" : "none";
+    $("progressRow").style.display = status==="reading" ? "" : "none";
+    $("datesRow").style.display = (status==="read"||status==="dnf") ? "" : "none";
+    $("ratingRow").style.display = status==="read" ? "" : "none";
+    $("notesRow").style.display = (status==="read"||status==="dnf") ? "" : "none";
+    $("dnfReasonRow").style.display = status==="dnf" ? "" : "none";
+    $("flagsRow").style.display = status==="read" ? "" : "none";
+    $("quotesRow").style.display = status==="read" ? "" : "none";
+  }
+  $("fieldStatus").addEventListener("change", updateStatusDependentFields);
+  $("fieldProgress").addEventListener("input", (e)=>{
+    $("progressVal").textContent = e.target.value + "%";
+  });
+
+  // Save: read every form field back into a book object, then either replace the record
+  // being edited or add a new one, write to storage, and redraw.
+  $("saveBookBtn").addEventListener("click", ()=>{
+    const title = $("fieldTitle").value.trim();
+    if(!title){ toast("Title is required"); return; }
+    const seriesName = $("fieldSeriesName").value.trim();
+    const seriesNumRaw = $("fieldSeriesNum").value;
+    const quotesRaw = $("fieldQuotes").value.trim();
+    const quotes = quotesRaw ? quotesRaw.split("\n").filter(l=>l.trim()).map(line=>{
+      const parts = line.split("||");
+      return { text: parts[0].trim(), page: parts[1] ? parts[1].trim() : "" };
+    }) : [];
+    const shelves = splitList($("fieldShelves").value);
+    const tags = splitList($("fieldTags").value);
+
+    const existing = editingId ? data.books.find(b=>b.id===editingId) : null;
+    const book = makeBook({
+      id: editingId || uid(),
+      isbn: $("isbnInput").value.trim(),
+      title: title,
+      author: $("fieldAuthor").value.trim(),
+      cover: $("fieldCover").value.trim(),
+      series: seriesName ? { name: seriesName, num: seriesNumRaw!=="" ? parseFloat(seriesNumRaw) : null } : null,
+      format: $("fieldFormat").value,
+      pages: $("fieldPages").value ? parseInt($("fieldPages").value,10) : null,
+      status: $("fieldStatus").value,
+      priority: $("fieldPriority").value,
+      progress: parseInt($("fieldProgress").value,10) || 0,
+      dateStarted: $("fieldDateStarted").value || null,
+      dateFinished: $("fieldDateFinished").value || null,
+      rating: parseInt($("fieldRating").value,10) || 0,
+      notes: $("fieldNotes").value.trim(),
+      dnfReason: $("fieldDnfReason").value.trim(),
+      isTopRead: $("fieldIsTop").checked,
+      isRereadCandidate: $("fieldIsRereadCandidate").checked,
+      isReread: $("fieldIsReread").checked,
+      quotes: quotes,
+      shelves: shelves,
+      tags: tags
+    });
+    if(existing) book.dateAdded = existing.dateAdded;
+
+    if(editingId){
+      const idx = data.books.findIndex(b=>b.id===editingId);
+      data.books[idx] = book;
+    } else {
+      data.books.push(book);
+    }
+    saveData();
+    closeModal();
+    renderAll();
+    toast("Saved");
+  });
+
+  $("deleteBookBtn").addEventListener("click", ()=>{
+    if(!editingId) return;
+    if(!confirm("Delete this book?")) return;
+    data.books = data.books.filter(b=>b.id!==editingId);
+    selectedIds.delete(editingId);
+    saveData();
+    closeModal();
+    renderAll();
+    toast("Deleted");
+  });
+
+  // =====================================================================================
+  // LOOKING BOOKS UP ONLINE
+  // Three free services are used, in order, and none needs an account or API key:
+  //   1. Open Library  - best metadata (title, author, pages, subjects)
+  //   2. Google Books  - fallback; often rate-limits anonymous callers with HTTP 429
+  //   3. Apple iTunes  - cover art only, used as a last resort
+  // Every call is wrapped in try/catch: these are third-party services over a network, so
+  // any of them can fail or return something unexpected at any time, and a failure must
+  // just fall through to the next option rather than break the page.
+  // =====================================================================================
+  // ---------- ISBN LOOKUP ----------
+  // Shared lookup used by both the single Add Book form and bulk import.
+  // Returns {title, author, pages, cover, source} or null if no match on either provider.
+  // Open Library subjects / Google Books categories are noisy catalog metadata (character
+  // names, BISAC paths, "Protected DAISY", foreign-language duplicates, etc.) — this pulls
+  // out a short list of clean genre tags plus a fiction/nonfiction guess from the raw list.
+  const SUBJECT_NOISE_RE = /(accessible book|protected daisy|in library|overdrive|large type|lending library|internet archive|long now|staff pick|media tie-in|movable books|pictorial works|specimens|juvenile works|translat|language materials|untranslated|new york times|^nyt\b|open library)/i;
+  // Open Library/Google subject lists interleave real genre terms with proper nouns (character
+  // and place names, e.g. "Arkenstone", "Battle of Five Armies") that have no noise pattern to
+  // catch them — so genre extraction is an ALLOW-list of recognizable genre/category words
+  // rather than a denylist, to avoid picking up story-specific trivia as a "genre".
+  const GENRE_KEYWORDS_RE = /\b(fantasy|science fiction|sci-?fi|space opera|cyberpunk|steampunk|dystopia\w*|utopia\w*|mystery|thriller|suspense|crime|detective|noir|romance|erotica|horror|gothic|paranormal|urban fantasy|historical fiction|literary fiction|adventure|western|war|action|epic|superhero\w*|magic\w*|classics?|poetry|drama|satire|humor|humour|fable|fairy tale|folklore|mythology|legend|graphic novel|comics?|manga|short stories|essays?|biograph\w*|autobiograph\w*|memoir|history|historical|philosophy|psycholog\w*|self-help|business|economics|politic\w*|science|math\w*|religio\w*|spiritual\w*|true crime|travel|cook\w*|art|music|sports?|technology|education|law|medic\w*|military|health|nature|coming of age|young adult|children'?s|juvenile|new adult|lgbtq\w*|feminis\w*)\b/i;
+  // Turns a catalogue's raw "subjects" list into a few clean genre tags. The two regular
+  // expressions above do the filtering: one drops known junk, the other only keeps terms
+  // that look like real genres. (A regular expression is a pattern for matching text.)
+  function extractGenreAndFiction(rawSubjects){
+    const all = (rawSubjects||[]).filter(Boolean);
+    const joined = all.join(" | ").toLowerCase();
+    let isFiction = null;
+    if(/non-?fiction/.test(joined)) isFiction = false;
+    else if(/\bfiction\b/.test(joined)) isFiction = true;
+
+    const seen = new Set();
+    const genres = [];
+    all.forEach(raw=>{
+      raw.split(/[\/,]/).forEach(part=>{
+        const s = part.trim();
+        if(!s) return;
+        if(/[^\x00-\x7F]/.test(s)) return; // skip non-English subject duplicates
+        if(/\(/.test(s)) return; // skip disambiguation parentheticals
+        if(SUBJECT_NOISE_RE.test(s)) return;
+        const lc = s.toLowerCase();
+        if(lc==="fiction" || lc==="nonfiction" || lc==="non-fiction" || lc==="general") return;
+        if(!GENRE_KEYWORDS_RE.test(s)) return; // drop character/place names and other subject trivia
+        if(seen.has(lc)) return;
+        seen.add(lc);
+        genres.push(lc);
+      });
+    });
+    return { isFiction, genres: genres.slice(0,4) };
+  }
+
+  // ---------- COVER RESOLUTION ----------
+  // A cover URL can't be trusted just because an API handed it over: Open Library's cover CDN
+  // answers a miss with a blank 43-byte 1x1 gif under HTTP 200 rather than a 404, and Google's
+  // and Apple's links can 404 outright. So every candidate is probed with a real image load,
+  // and only a URL that decodes to more than 1px wide is ever stored on a book.
+  const coverProbeCache = new Map();
+  // Probing a cover URL has THREE possible answers, not two. Treating a slow network the
+  // same as a missing image is what caused wrong covers to be saved: a perfectly good
+  // cover that merely timed out looked identical to one that does not exist, so the code
+  // fell through to a fuzzier source and stored its guess.
+  const COVER_OK = "ok", COVER_MISSING = "missing", COVER_TIMEOUT = "timeout";
+  const COVER_PROBE_MS = 20000; // deliberately generous: slow must not read as "missing"
+  function probeCover(url){
+    if(!url) return Promise.resolve(COVER_MISSING);
+    if(coverProbeCache.has(url)) return coverProbeCache.get(url);
+    const probe = new Promise(resolve=>{
+      const img = new Image();
+      let settled = false;
+      const finish = r=>{ if(!settled){ settled = true; resolve(r); } };
+      img.onload = ()=>finish(img.naturalWidth > 1 ? COVER_OK : COVER_MISSING);
+      img.onerror = ()=>finish(COVER_MISSING);
+      setTimeout(()=>finish(COVER_TIMEOUT), COVER_PROBE_MS);
+      img.src = url;
+    });
+    // A timeout describes the network, not the URL, so it must not be remembered: the same
+    // URL may load perfectly well on the next attempt.
+    probe.then(r=>{ if(r === COVER_TIMEOUT) coverProbeCache.delete(url); });
+    coverProbeCache.set(url, probe);
+    return probe;
+  }
+  function loadsAsRealImage(url){
+    return probeCover(url).then(r=>r === COVER_OK);
+  }
+  // Returns the first candidate that genuinely loads, plus whether any candidate timed out.
+  // `inconclusive` means an empty result cannot be trusted: the catalogue may well hold a
+  // cover that this connection simply failed to fetch, so callers must not read it as
+  // "no cover exists" and overwrite good data on the strength of it.
+  async function resolveCover(candidates){
+    let inconclusive = false;
+    for(const url of candidates){
+      const r = await probeCover(url);
+      if(r === COVER_OK) return { url, inconclusive:false };
+      if(r === COVER_TIMEOUT) inconclusive = true;
+    }
+    return { url:"", inconclusive };
+  }
+  async function firstWorkingCover(candidates){
+    return (await resolveCover(candidates)).url;
+  }
+  // default=false makes the CDN return 404 on a miss instead of the blank 1x1 gif.
+  function olCoverUrl(pathPart){
+    return `https://covers.openlibrary.org/b/${pathPart}-L.jpg?default=false`;
+  }
+  // Google publishes several sizes and only some exist per volume; edge=curl adds a fake
+  // page-curl graphic to the artwork, so it gets stripped.
+  function googleCoverUrl(volumeInfo){
+    const links = (volumeInfo && volumeInfo.imageLinks) || {};
+    const best = links.extraLarge || links.large || links.medium || links.small || links.thumbnail || links.smallThumbnail || "";
+    return best ? best.replace(/^http:/,"https:").replace(/&edge=curl/g,"") : "";
+  }
+  // Open Library's search index, queried by ISBN. It serves two purposes: an edition with no
+  // cover of its own can still belong to a work that has one (exposed as cover_i), and it
+  // still answers when the /api/books endpoint does not — that endpoint has been returning
+  // 404 for every ISBN, so without this an ISBN import comes back with no title at all.
+  async function olIsbnSearchDoc(isbn){
+    try{
+      const params = new URLSearchParams({ q: `isbn:${isbn}`, limit: "1" });
+      params.set("fields", "title,author_name,number_of_pages_median,cover_i,subject");
+      const resp = await fetch(`https://openlibrary.org/search.json?${params.toString()}`);
+      if(!resp.ok) return null;
+      const json = await resp.json();
+      return (json.docs||[])[0] || null;
+    }catch(e){ return null; }
+  }
+  function normalizeTitle(s){ return String(s||"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim(); }
+  // Apple matches on free text, so its result has to be checked before its cover is trusted:
+  // a loose substring test accepts "Pope Francis in Myanmar" for a book called "Francis".
+  // Equality or a whole-word prefix still allows a subtitle to differ without letting an
+  // unrelated book through, because a wrong cover is worse than no cover.
+  function titlesMatch(a, b){
+    if(!a || !b) return false;
+    return a === b || a.startsWith(b + " ") || b.startsWith(a + " ");
+  }
+  // Apple sends no Access-Control-Allow-Origin for the "null" origin that a page opened
+  // straight from disk has, so a plain fetch() is blocked under file:// and the failure is
+  // silent. A JSONP <script> request isn't subject to CORS at all, so it works both from
+  // file:// and over http://. Failure resolves to null rather than hanging the lookup.
+  // JSONP: an old technique for calling an API that normal fetch() cannot reach.
+  // Browsers block cross-site fetch() unless the server opts in (CORS), and Apple does
+  // not opt in for pages opened directly from disk (a "file://" page). A <script> tag,
+  // however, has never been subject to that restriction — so the request is made by
+  // adding a script tag and letting the response call a function we registered by name.
+  // Without this, covers from Apple silently fail whenever the file is opened from disk.
+  function itunesJsonp(term){
+    return new Promise(resolve=>{
+      const cb = "itunesCb" + Math.random().toString(36).slice(2);
+      const script = document.createElement("script");
+      let done = false;
+      const finish = data=>{
+        if(done) return;
+        done = true;
+        delete window[cb];
+        script.remove();
+        resolve(data);
+      };
+      window[cb] = finish;
+      script.onerror = ()=>finish(null);
+      setTimeout(()=>finish(null), 8000);
+      script.src = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=ebook&limit=5&callback=${cb}`;
+      document.head.appendChild(script);
+    });
+  }
+  // Apple free-text search can return a different book that happens to share a title, so
+  // when an author is known it has to agree too. Names are compared on their significant
+  // words with initials and punctuation dropped, so "R. J. Barker" still matches "RJ Barker".
+  function authorsAgree(wantAuthor, gotAuthor){
+    if(!wantAuthor) return true; // nothing to check against, fall back to the title match
+    const words = v => normalizeTitle(v).split(" ").filter(w=>w.length > 2);
+    const want = words(wantAuthor), got = words(gotAuthor);
+    if(!want.length || !got.length) return true;
+    return want.some(w=>got.includes(w));
+  }
+  async function itunesSearch(term, want, wantAuthor){
+    const json = await itunesJsonp(term);
+    if(!json) return [];
+    const hit = (json.results||[]).find(r=>r.artworkUrl100
+      && titlesMatch(normalizeTitle(r.trackName), want)
+      && authorsAgree(wantAuthor, r.artistName));
+    if(!hit) return [];
+    // Prefer the upscaled artwork, keeping the original in case that size isn't generated.
+    return [hit.artworkUrl100.replace(/100x100bb\.jpg$/, "600x600bb.jpg"), hit.artworkUrl100];
+  }
+  // Last resort: Apple's search endpoint needs no key and doesn't hand out the 429s that the
+  // unauthenticated Google Books endpoint does.
+  async function itunesCovers(title, author){
+    if(!title) return [];
+    const want = normalizeTitle(title);
+    // Narrowing by author returns nothing whenever Apple's catalog credits the book
+    // differently (common for abridgements and reissues), so a title-only retry follows.
+    if(author){
+      const narrowed = await itunesSearch(`${title} ${author}`, want, author);
+      if(narrowed.length) return narrowed;
+    }
+    return itunesSearch(title, want, author);
+  }
+
+  // Look up one ISBN and return {title, author, pages, cover, genres, ...} or null.
+  // "async" means the function returns a Promise and can use `await` inside; callers must
+  // `await` it too. Cover URLs are collected as *candidates* and each is verified by
+  // actually loading it, because a service listing a cover is not proof one exists.
+  async function fetchIsbnData(isbn){
+    let result = null;
+    const candidates = [];
+    try{
+      const olResp = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+      const olData = await olResp.json();
+      const info = olData["ISBN:"+isbn];
+      if(info){
+        const { isFiction, genres } = extractGenreAndFiction((info.subjects||[]).map(s=>s.name));
+        if(info.cover) [info.cover.large, info.cover.medium, info.cover.small].forEach(u=>{ if(u) candidates.push(u); });
+        result = {
+          title: info.title || "",
+          author: (info.authors && info.authors.length) ? info.authors.map(a=>a.name).join(", ") : "",
+          pages: info.number_of_pages || null,
+          isFiction, genres,
+          source: "Open Library"
+        };
+      }
+    }catch(e){ /* fall through to the remaining cover sources / Google Books */ }
+    const searchDoc = await olIsbnSearchDoc(isbn);
+    if(searchDoc){
+      if(searchDoc.cover_i) candidates.push(olCoverUrl(`id/${searchDoc.cover_i}`));
+      if(!result && searchDoc.title){
+        const { isFiction, genres } = extractGenreAndFiction(searchDoc.subject||[]);
+        result = {
+          title: searchDoc.title,
+          author: (searchDoc.author_name && searchDoc.author_name.length) ? searchDoc.author_name.join(", ") : "",
+          pages: searchDoc.number_of_pages_median || null,
+          isFiction, genres,
+          source: "Open Library search"
+        };
+      }
+    }
+    candidates.push(olCoverUrl(`isbn/${isbn}`));
+    let cover = await firstWorkingCover(candidates);
+
+    // Google Books runs both when Open Library had no record at all and when it had a record
+    // but no cover that actually loads — the latter case previously returned early and so
+    // never reached this fallback.
+    if(!result || !cover){
+      try{
+        const gResp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+        const gData = await gResp.json();
+        if(gData.items && gData.items.length){
+          const v = gData.items[0].volumeInfo;
+          if(!cover) cover = await firstWorkingCover([googleCoverUrl(v)]);
+          if(!result){
+            const { isFiction, genres } = extractGenreAndFiction(v.categories||[]);
+            result = {
+              title: v.title || "",
+              author: v.authors ? v.authors.join(", ") : "",
+              pages: v.pageCount || null,
+              isFiction, genres,
+              source: "Google Books"
+            };
+          }
+        }
+      }catch(e2){ /* both providers failed (network/CORS) */ }
+    }
+    if(!cover && result) cover = await firstWorkingCover(await itunesCovers(result.title, result.author));
+    if(!result) return null;
+    result.cover = cover;
+    return result;
+  }
+  // Merges auto-detected fiction/nonfiction + genre tags into a comma-separated tag string
+  // without clobbering anything the user already typed.
+  // Adds discovered genre tags to whatever the user has already typed, without removing
+  // or duplicating any of their own tags.
+  function mergeTagSuggestions(existingTagsStr, result){
+    if(!result) return { value: existingTagsStr, added: [] };
+    const existing = splitList(existingTagsStr);
+    const seen = new Set(existing.map(t=>t.toLowerCase()));
+    const added = [];
+    if(result.isFiction===true && !seen.has("fiction")){ existing.push("fiction"); seen.add("fiction"); added.push("fiction"); }
+    if(result.isFiction===false && !seen.has("nonfiction")){ existing.push("nonfiction"); seen.add("nonfiction"); added.push("nonfiction"); }
+    (result.genres||[]).forEach(g=>{
+      if(!seen.has(g)){ existing.push(g); seen.add(g); added.push(g); }
+    });
+    return { value: existing.join(", "), added };
+  }
+
+  // =====================================================================================
+  // SEARCH BY TITLE (in the Add Book dialog)
+  // Rather than guessing, this shows several matching editions and lets the user pick.
+  // The matches are held in `titleHits`; each rendered button carries its position in
+  // that list as data-hit, which is how a click maps back to the right record.
+  // =====================================================================================
+  // ---------- TITLE SEARCH (Add Book) ----------
+  let titleHits = [];
+  function clearTitleSearch(){
+    titleHits = [];
+    $("titleSearchInput").value = "";
+    $("titleSearchStatus").textContent = "";
+    const box = $("titleSearchResults");
+    box.innerHTML = "";
+    box.classList.remove("open");
+  }
+  function renderTitleHits(){
+    const box = $("titleSearchResults");
+    box.innerHTML = titleHits.map((c,i)=>{
+      const sub = [c.author || "Unknown author", c.year || null, c.pages ? c.pages+"p" : null]
+        .filter(Boolean).join(" · ");
+      return `<button type="button" class="title-hit" data-hit="${i}">
+        ${coverImg(c,"cover")}
+        <span class="title-hit-main">
+          <span class="title-hit-title">${esc(c.title)}</span>
+          <span class="title-hit-sub">${esc(sub)}</span>
+        </span>
+      </button>`;
+    }).join("");
+    box.classList.toggle("open", titleHits.length > 0);
+  }
+  async function runTitleSearch(){
+    const title = $("titleSearchInput").value.trim();
+    const statusEl = $("titleSearchStatus");
+    if(!title){ statusEl.textContent = "Enter a title first."; return; }
+    const btn = $("titleSearchBtn");
+    btn.disabled = true;
+    statusEl.textContent = "Searching...";
+    titleHits = await searchTitleCandidates(title, $("fieldAuthor").value.trim());
+    btn.disabled = false;
+    renderTitleHits();
+    statusEl.textContent = titleHits.length
+      ? `${titleHits.length} match(es) via ${titleHits[0].source} — pick one to fill the form.`
+      : "No matches. Try fewer words, or use the ISBN lookup above.";
+  }
+  $("titleSearchBtn").addEventListener("click", runTitleSearch);
+  $("titleSearchInput").addEventListener("keydown", (e)=>{
+    if(e.key === "Enter"){ e.preventDefault(); runTitleSearch(); }
+  });
+  $("titleSearchResults").addEventListener("click", async (e)=>{
+    const hitBtn = e.target.closest("button[data-hit]");
+    if(!hitBtn) return;
+    const c = titleHits[+hitBtn.dataset.hit];
+    if(!c) return;
+    const statusEl = $("titleSearchStatus");
+    statusEl.textContent = "Fetching cover...";
+    if(c.title) $("fieldTitle").value = c.title;
+    if(c.author) $("fieldAuthor").value = c.author;
+    if(c.pages) $("fieldPages").value = c.pages;
+    if(c.isbn) $("isbnInput").value = c.isbn;
+    const { isFiction, genres } = extractGenreAndFiction(c.subjects||[]);
+    const tagsField = $("fieldTags");
+    const merged = mergeTagSuggestions(tagsField.value, { isFiction, genres });
+    tagsField.value = merged.value;
+    // Same resolver the rest of the app uses, so a listed-but-dead cover still ends up
+    // replaced by a working one rather than being written to the book as-is.
+    let cover = await firstWorkingCover([c.cover]);
+    if(!cover) cover = await firstWorkingCover(await itunesCovers(c.title, c.author));
+    if(cover) $("fieldCover").value = cover;
+    $("titleSearchResults").classList.remove("open");
+    statusEl.textContent = `Filled from ${c.source}.`
+      + (cover ? "" : " No cover found — it will show a placeholder.")
+      + (merged.added.length ? " Added tag(s): "+merged.added.join(", ")+"." : "");
+  });
+
+  $("isbnLookupBtn").addEventListener("click", async ()=>{
+    const isbn = $("isbnInput").value.replace(/[^0-9Xx]/g,"");
+    const statusEl = $("lookupStatus");
+    if(!isbn){ statusEl.textContent = "Enter an ISBN first."; return; }
+    statusEl.textContent = "Looking up...";
+    const result = await fetchIsbnData(isbn);
+    if(result){
+      if(result.title) $("fieldTitle").value = result.title;
+      if(result.author) $("fieldAuthor").value = result.author;
+      if(result.pages) $("fieldPages").value = result.pages;
+      if(result.cover) $("fieldCover").value = result.cover;
+      const tagsField = $("fieldTags");
+      const merged = mergeTagSuggestions(tagsField.value, result);
+      tagsField.value = merged.value;
+      statusEl.textContent = "Found via "+result.source+"."+(merged.added.length ? " Added tag(s): "+merged.added.join(", ")+"." : "");
+    } else {
+      statusEl.textContent = "No match found. If running from file://, try a local server (python -m http.server) for CORS.";
+    }
+  });
+
+  // Backup and restore. Export builds a file in memory and triggers a download by
+  // clicking an invisible link; import reads a chosen file with FileReader (which is
+  // asynchronous, hence the onload handler).
+  //
+  // There are two kinds of file, because there are two different jobs:
+  //   - Export        writes the open profile's library alone, so it can be handed to the
+  //                   person it belongs to, or moved to another machine.
+  //   - Backup All    writes every profile on this machine into one file.
+  // Import tells them apart by looking at what is inside, so there is only one Import
+  // button and no way to pick the wrong one.
+  // ---------- EXPORT / IMPORT ----------
+  function downloadJSON(obj, filename){
+    const blob = new Blob([JSON.stringify(obj,null,2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  // Turns a profile name into something safe to use as a filename.
+  function slug(str){
+    return String(str||"profile").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"") || "profile";
+  }
+
+  $("exportBtn").addEventListener("click", ()=>{
+    saveData();
+    downloadJSON(data, "book-tracker-" + slug(activeProfile().name) + ".json");
+  });
+  $("backupAllBtn").addEventListener("click", ()=>{
+    saveData();
+    downloadJSON({
+      kind: "bookTrackerBackup", version: 1,
+      exported: new Date().toISOString(),
+      activeId: store.activeId,
+      profiles: store.profiles
+    }, "book-tracker-all-profiles-" + new Date().toISOString().slice(0,10) + ".json");
+    toast("Backed up " + store.profiles.length + " profile" + (store.profiles.length===1?"":"s"));
+  });
+
+  $("importBtn").addEventListener("click", ()=>$("importFile").click());
+  $("importFile").addEventListener("change", (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      try{
+        const imported = JSON.parse(reader.result);
+        if(imported && Array.isArray(imported.profiles) && imported.profiles.length){
+          // A whole-machine backup. This replaces every profile, so it asks first.
+          const n = imported.profiles.length;
+          if(!confirm("This file holds " + n + " profile" + (n===1?"":"s") + ".\n\nRestoring replaces every profile currently in this browser. Continue?")) return;
+          store = normalizeStore({ activeId: imported.activeId, profiles: imported.profiles });
+          data = activeProfile().data;
+          saveData();
+          applyProfileTheme(); renderProfileUI(); renderAll();
+          toast("Restored " + n + " profile" + (n===1?"":"s"));
+        } else if(imported && Array.isArray(imported.books)){
+          // A single-profile file. It lands in whichever profile is open, replacing it —
+          // which is worth a confirmation when that profile is not empty.
+          const here = activeProfile();
+          if(data.books.length && !confirm("Replace the " + data.books.length + " book" + (data.books.length===1?"":"s") + " in “" + here.name + "” with this file?\n\nThe other profiles are not affected.")) return;
+          data = imported;
+          if(!Array.isArray(data.challenges)) data.challenges = [];
+          saveData(); renderAll(); renderCompare();
+          toast("Imported into " + here.name);
+        } else {
+          toast("Invalid file format");
+        }
+      }catch(err){ toast("Could not parse file"); }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  });
+
+  // ---------- BULK IMPORT (ISBN list, or CSV with title/author/isbn columns) ----------
+  const bulkOverlay = $("bulkModalOverlay");
+  let bulkEntries = []; // each: {isbn, title, author}
+  let bulkStopRequested = false;
+  let bulkRawText = "";  // kept so the file can be re-read when the interpretation changes
+
+  // =====================================================================================
+  // CSV PARSING
+  // A CSV row cannot simply be split on commas, because a field may be quoted and contain
+  // commas of its own, e.g.  "Smith, John",1984,9780451524935
+  // This walks the line one character at a time, tracking whether it is currently inside
+  // quotes, and treats a doubled "" as an escaped quote character.
+  // =====================================================================================
+  function splitCsvLine(line){
+    // Minimal CSV splitter: handles quoted fields containing commas, and "" as an escaped quote.
+    const fields = [];
+    let cur = "", inQuotes = false;
+    for(let i=0;i<line.length;i++){
+      const ch = line[i];
+      if(inQuotes){
+        if(ch === '"'){
+          if(line[i+1] === '"'){ cur += '"'; i++; }
+          else inQuotes = false;
+        } else cur += ch;
+      } else {
+        if(ch === '"') inQuotes = true;
+        else if(ch === ","){ fields.push(cur); cur = ""; }
+        else cur += ch;
+      }
+    }
+    fields.push(cur);
+    return fields.map(f=>f.trim());
+  }
+  // Validates an ISBN before it is ever sent to an API: strip everything that is not a
+  // digit or X (so dashes and spaces are tolerated), then accept only the two real
+  // lengths, 10 or 13. Returns the cleaned ISBN, or null if it is not one.
+  function looksLikeIsbn(s){
+    const cleaned = (s||"").replace(/[^0-9Xx]/g,"").toUpperCase();
+    return (cleaned.length === 10 || cleaned.length === 13) ? cleaned : null;
+  }
+
+  // Reads a whole uploaded file into a list of {isbn, title, author} entries.
+  // It copes with several shapes of file:
+  //   - a plain list with one ISBN per line
+  //   - a CSV with a header row naming the columns (in any order). Columns the header
+  //     does not name are still examined by shape, so a column headed "CSV" or "Notes"
+  //     that holds ISBNs is found anyway.
+  //   - a CSV with no header at all, where every column has to be guessed: whichever
+  //     column is ISBN-shaped wherever it is filled in is treated as the ISBN column
+  //   - a file that lists titles down one column for some rows and ISBNs down another
+  //     for the rest, leaving the opposite column blank in each
+  // It also skips duplicates, both against books already in the library and against
+  // earlier rows of the same file, so importing twice will not create two copies.
+  //
+  // `splitColumns` picks between the two ways a row holding both an ISBN and a title can
+  // be read, which no file can disambiguate on its own:
+  //   false - one row is one book, and the ISBN is that book's ISBN. This is what a
+  //           catalogue export (Goodreads and friends) means, and is the default.
+  //   true  - the columns are two independent lists, so a row naming both yields TWO
+  //           books: one looked up by its ISBN, one searched for by title.
+  // Returns { entries, mixedRows }, where mixedRows counts the rows that carried both
+  // kinds of identifier — the caller uses it to decide whether to offer the choice.
+  function parseBulkFile(text, splitColumns){
+    const rawLines = text.split(/\r?\n/).filter(l=>l.trim().length);
+    if(!rawLines.length) return [];
+    const rows = rawLines.map(splitCsvLine);
+
+    // Detect a header row by column-name keywords; otherwise treat every row as data.
+    const headerCandidates = rows[0].map(c=>c.toLowerCase());
+    const nameHints = {
+      isbn: ["isbn","isbn13","isbn10","isbn-13","isbn-10"],
+      title: ["title","book","book title","name"],
+      author: ["author","authors","by","writer"]
+    };
+    let colMap = null;
+    if(rows[0].length > 1){
+      const found = {};
+      headerCandidates.forEach((cell, idx)=>{
+        Object.keys(nameHints).forEach(key=>{
+          if(nameHints[key].includes(cell)) found[key] = idx;
+        });
+      });
+      if(Object.keys(found).length) colMap = found;
+    }
+    const dataRows = colMap ? rows.slice(1) : rows;
+    // Rows can be ragged, so the widest one decides how many columns there are.
+    const colCount = rows.reduce((m,r)=>Math.max(m, r.length), 0);
+    const sample = dataRows.slice(0, Math.min(50, dataRows.length));
+
+    // Finds the most ISBN-like of the columns not already claimed by name.
+    // The test is a RATIO over the cells that have any content, not a count over every
+    // row: a column can be blank most of the way down and still obviously be the ISBN
+    // column — which is exactly what happens when a file lists titles for a stretch of
+    // rows and ISBNs for another stretch, leaving the other column empty in each.
+    function findIsbnColumn(taken){
+      let best = -1, bestHits = 0;
+      for(let c=0;c<colCount;c++){
+        if(taken.indexOf(c) !== -1) continue;
+        let filled = 0, hits = 0;
+        sample.forEach(r=>{
+          const cell = String(r[c]==null ? "" : r[c]).trim();
+          if(!cell) return;
+          filled++;
+          if(looksLikeIsbn(cell)) hits++;
+        });
+        if(hits > 0 && hits >= filled*0.5 && hits > bestHits){ bestHits = hits; best = c; }
+      }
+      return best;
+    }
+
+    if(colMap){
+      // A header can name some columns and leave others unrecognised. A column headed
+      // "CSV", "Notes" or anything else unfamiliar is still the ISBN column if it is full
+      // of ISBNs, so the unclaimed columns get the same shape test used for headerless
+      // files. Columns the header did name are left alone: an explicit name always wins.
+      if(colMap.isbn == null){
+        const guessed = findIsbnColumn(Object.keys(colMap).map(k=>colMap[k]));
+        if(guessed !== -1) colMap.isbn = guessed;
+      }
+    } else if(colCount === 1){
+      // A plain list, one ISBN per line.
+      colMap = { isbn: 0 };
+    } else {
+      // No header at all: work every column out from the shape of the data. Whichever
+      // column is ISBN-shaped is the isbn column; of the rest, first is title and second
+      // is author, which is the usual CSV order.
+      colMap = {};
+      const guessed = findIsbnColumn([]);
+      if(guessed !== -1) colMap.isbn = guessed;
+      const remaining = [...Array(colCount).keys()].filter(c=>c!==colMap.isbn);
+      if(remaining.length>0) colMap.title = remaining[0];
+      if(remaining.length>1) colMap.author = remaining[1];
+    }
+
+    const existingIsbns = new Set(data.books.map(b=>(b.isbn||"").replace(/[^0-9Xx]/g,"").toUpperCase()).filter(Boolean));
+    const existingTitleAuthor = new Set(data.books.map(b=>((b.title||"")+"|"+(b.author||"")).toLowerCase()));
+    // A row with a title but no author gets its author filled in by the lookup, so the saved
+    // book never matches "title|" again. Such rows are compared on the title alone.
+    const existingTitles = new Set(data.books.map(b=>(b.title||"").toLowerCase()));
+    const seenIsbns = new Set(), seenTitleAuthor = new Set();
+    const result = [];
+    let mixedRows = 0;
+
+    // Queues one book, unless it is already in this profile's library or has already been
+    // queued from an earlier row. An entry carrying an ISBN is identified by that ISBN;
+    // one without is identified by title+author.
+    function addEntry(isbn, title, author){
+      if(!isbn && !title) return; // nothing usable
+      if(isbn){
+        if(existingIsbns.has(isbn) || seenIsbns.has(isbn)) return;
+        seenIsbns.add(isbn);
+      } else {
+        const key = (title+"|"+author).toLowerCase();
+        const alreadyOwned = author ? existingTitleAuthor.has(key) : existingTitles.has(title.toLowerCase());
+        if(alreadyOwned || seenTitleAuthor.has(key)) return;
+        seenTitleAuthor.add(key);
+      }
+      result.push({ isbn: isbn||"", title, author });
+    }
+
+    dataRows.forEach(r=>{
+      const isbn = colMap.isbn!=null ? looksLikeIsbn(r[colMap.isbn]) : null;
+      const title = colMap.title!=null ? (r[colMap.title]||"").trim() : "";
+      const author = colMap.author!=null ? (r[colMap.author]||"").trim() : "";
+      if(isbn && title) mixedRows++;
+
+      if(splitColumns){
+        // Two lists: the ISBN names one book, the title (with its author, if there is an
+        // author column) names another. Each is looked up on its own terms.
+        addEntry(isbn, "", "");
+        addEntry(null, title, author);
+      } else {
+        // One book, described by every column on the row.
+        addEntry(isbn, title, author);
+      }
+    });
+    return { entries: result, mixedRows };
+  }
+
+  // Open Library's author= filter only matches the exact name form it stores, so a catalog
+  // entry of "R. J. Barker" is missed by a search for "RJ Barker" — and a miss there returns
+  // no document at all, losing the page count and genres along with the cover. The narrower
+  // query is therefore followed by a title-only retry before the book is given up on.
+  async function olSearchDocs(title, author, limit){
+    for(const useAuthor of (author ? [true, false] : [false])){
+      try{
+        const params = new URLSearchParams({ title: title });
+        if(useAuthor) params.set("author", author);
+        params.set("limit", String(limit));
+        // subject is NOT in this endpoint's default field set — without asking for it the
+        // genre/fiction tagging silently gets nothing to work with. Naming fields at all
+        // means naming every one the callers read.
+        params.set("fields", "title,author_name,first_publish_year,number_of_pages_median,isbn,cover_i,subject");
+        const resp = await fetch(`https://openlibrary.org/search.json?${params.toString()}`);
+        if(!resp.ok) continue;
+        const json = await resp.json();
+        if(json.docs && json.docs.length) return json.docs;
+      }catch(e){ /* try the next query form */ }
+    }
+    return [];
+  }
+  async function olSearchDoc(title, author){
+    return (await olSearchDocs(title, author, 1))[0] || null;
+  }
+
+  // Candidate list for the Add Book title search. Covers here are shown as-is rather than
+  // probed, because the picker renders them as <img> and a dud collapses to the placeholder
+  // on its own; the chosen book's cover goes through the full resolver on selection.
+  // Builds the list of choices shown in the title-search picker (up to 8).
+  async function searchTitleCandidates(title, author){
+    const docs = await olSearchDocs(title, author, 8);
+    if(docs.length){
+      return docs.map(d=>({
+        title: d.title || "",
+        author: (d.author_name && d.author_name.length) ? d.author_name.join(", ") : "",
+        year: d.first_publish_year || null,
+        pages: d.number_of_pages_median || null,
+        isbn: (d.isbn && d.isbn.length) ? d.isbn[0] : "",
+        cover: d.cover_i ? olCoverUrl(`id/${d.cover_i}`) : "",
+        subjects: d.subject || [],
+        source: "Open Library"
+      }));
+    }
+    try{
+      const q = author ? `intitle:${title} inauthor:${author}` : `intitle:${title}`;
+      const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=8`);
+      if(!resp.ok) return [];
+      const data = await resp.json();
+      return (data.items||[]).map(it=>{
+        const v = it.volumeInfo || {};
+        const ids = v.industryIdentifiers || [];
+        const isbnEntry = ids.find(i=>i.type==="ISBN_13") || ids.find(i=>i.type==="ISBN_10");
+        return {
+          title: v.title || "",
+          author: (v.authors||[]).join(", "),
+          year: v.publishedDate ? parseInt(v.publishedDate.slice(0,4),10) || null : null,
+          pages: v.pageCount || null,
+          isbn: isbnEntry ? isbnEntry.identifier : "",
+          cover: googleCoverUrl(v),
+          subjects: v.categories || [],
+          source: "Google Books"
+        };
+      }).filter(c=>c.title);
+    }catch(e){ return []; }
+  }
+
+  // Fallback lookup for rows with no ISBN — searches Open Library by title/author,
+  // then falls back to Google Books (same chain as fetchIsbnData) if that misses.
+  // Used when there is no ISBN to work from - e.g. a CSV row with only a title.
+  async function fetchByTitleAuthor(title, author){
+    let result = null;
+    let cover = "";
+    const d = await olSearchDoc(title, author);
+    if(d){
+      const { isFiction, genres } = extractGenreAndFiction(d.subject||[]);
+      const isbn = (d.isbn && d.isbn.length) ? d.isbn[0] : "";
+      const candidates = [];
+      if(d.cover_i) candidates.push(olCoverUrl(`id/${d.cover_i}`));
+      if(isbn) candidates.push(olCoverUrl(`isbn/${isbn}`));
+      cover = await firstWorkingCover(candidates);
+      result = {
+        title: d.title || title,
+        author: (d.author_name && d.author_name.length) ? d.author_name.join(", ") : author,
+        pages: d.number_of_pages_median || null,
+        isbn,
+        isFiction, genres,
+        source: "Open Library search"
+      };
+    }
+    if(!result || !cover){
+      try{
+        const q = author ? `intitle:${title} inauthor:${author}` : `intitle:${title}`;
+        const gResp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=1`);
+        const gData = await gResp.json();
+        if(gData.items && gData.items.length){
+          const v = gData.items[0].volumeInfo;
+          if(!cover) cover = await firstWorkingCover([googleCoverUrl(v)]);
+          if(!result){
+            const { isFiction, genres } = extractGenreAndFiction(v.categories||[]);
+            const isbnEntry = (v.industryIdentifiers||[]).find(id=>id.type==="ISBN_13") || (v.industryIdentifiers||[]).find(id=>id.type==="ISBN_10");
+            result = {
+              title: v.title || title,
+              author: v.authors ? v.authors.join(", ") : author,
+              pages: v.pageCount || null,
+              isbn: isbnEntry ? isbnEntry.identifier : "",
+              isFiction, genres,
+              source: "Google Books"
+            };
+          }
+        }
+      }catch(e2){ /* both providers failed (network/CORS) */ }
+    }
+    if(!cover) cover = await firstWorkingCover(await itunesCovers(result ? result.title : title, result ? result.author : author));
+    if(!result) return null;
+    result.cover = cover;
+    return result;
+  }
+
+  $("bulkIsbnBtn").addEventListener("click", ()=>$("bulkIsbnFile").click());
+  $("bulkIsbnFile").addEventListener("change", (e)=>{
+    const file = e.target.files[0];
+    e.target.value = "";
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      bulkRawText = reader.result;
+      $("bulkSplitColumns").checked = false;   // default to one-row-one-book every time
+      if(!refreshBulkPreview()){ toast("No new books found in that file"); return; }
+      $("bulkPreviewStage").style.display = "";
+      $("bulkProgressStage").style.display = "none";
+      $("bulkProgressBar").style.width = "0%";
+      $("bulkLog").innerHTML = "";
+      $("bulkDoneBtn").style.display = "none";
+      bulkOverlay.classList.add("active");
+    };
+    reader.readAsText(file);
+  });
+  // Re-reads the file under the currently chosen interpretation and updates the preview.
+  // Both readings are worked out every time so the hint can state what each would import,
+  // which is the only way to make the choice meaningful before committing to it.
+  // Returns false when the file yields no books at all.
+  function refreshBulkPreview(){
+    const paired = parseBulkFile(bulkRawText, false);
+    const apart  = parseBulkFile(bulkRawText, true);
+    const chosen = $("bulkSplitColumns").checked ? apart : paired;
+    bulkEntries = chosen.entries;
+    $("bulkFoundCount").textContent = bulkEntries.length;
+
+    if(paired.mixedRows > 0){
+      $("bulkSplitRow").style.display = "";
+      $("bulkSplitHint").textContent =
+        paired.mixedRows + " row(s) have a title and an ISBN side by side. Leave this off if "
+        + "they describe the same book (" + paired.entries.length + " book(s) to import). Turn it "
+        + "on if the ISBN belongs to a different book than the title beside it ("
+        + apart.entries.length + " book(s) to import).";
+    } else {
+      $("bulkSplitRow").style.display = "none";
+    }
+    return bulkEntries.length > 0;
+  }
+  $("bulkSplitColumns").addEventListener("change", refreshBulkPreview);
+
+  $("bulkCancelBtn").addEventListener("click", ()=>bulkOverlay.classList.remove("active"));
+  bulkOverlay.addEventListener("click", (e)=>{ if(e.target === bulkOverlay && $("bulkProgressStage").style.display==="none") bulkOverlay.classList.remove("active"); });
+
+  // Runs the bulk import: one book at a time, updating the progress bar and log as it
+  // goes. The loop is deliberately sequential rather than firing every request at once —
+  // see the delay at the end of the loop body.
+  $("bulkStartBtn").addEventListener("click", async ()=>{
+    const priority = $("bulkPriority").value;
+    $("bulkPreviewStage").style.display = "none";
+    $("bulkProgressStage").style.display = "";
+    bulkStopRequested = false;
+    const logEl = $("bulkLog");
+    const total = bulkEntries.length;
+    let added = 0, found = 0;
+
+    for(let i=0; i<total; i++){
+      if(bulkStopRequested) break;
+      const entry = bulkEntries[i];
+      const label = entry.isbn ? `ISBN ${entry.isbn}` : (entry.title || "untitled row");
+      $("bulkProgressLabel").textContent = `Looking up ${i+1} of ${total} (${label})...`;
+
+      let result = null;
+      try{
+        result = entry.isbn ? await fetchIsbnData(entry.isbn) : await fetchByTitleAuthor(entry.title, entry.author);
+      }catch(e){ result = null; }
+
+      const finalTitle = entry.title || (result && result.title) || "Unknown title";
+      const finalAuthor = entry.author || (result && result.author) || "";
+      const autoTags = mergeTagSuggestions("", result).value;
+
+      const book = makeBook({
+        isbn: entry.isbn || (result && result.isbn) || "",
+        title: finalTitle,
+        author: finalAuthor,
+        cover: result ? (result.cover||"") : "",
+        pages: result ? result.pages : null,
+        priority: priority,
+        tags: splitList(autoTags)
+      });
+      data.books.push(book);
+      added++;
+      if(result) found++;
+
+      const line = document.createElement("div");
+      line.textContent = result ? `✓ ${finalTitle} — ${finalAuthor||"unknown author"}` : `⚠ ${label} — no match found, added with the info from the file only`;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+
+      $("bulkProgressBar").style.width = Math.round(((i+1)/total)*100)+"%";
+      saveData();
+      // RATE LIMITING: pause 300ms between lookups. These APIs are free and shared, and
+      // firing hundreds of requests as fast as possible gets an IP throttled (HTTP 429)
+      // or blocked. Importing is slower as a result, but it actually completes.
+      if(i < total-1) await new Promise(r=>setTimeout(r, 300)); // be polite to the free lookup APIs
+    }
+
+    $("bulkProgressLabel").textContent = bulkStopRequested
+      ? `Stopped. Added ${added} of ${total} (${found} matched, ${added-found} unmatched).`
+      : `Done. Added ${added} book(s) — ${found} matched, ${added-found} unmatched.`;
+    $("bulkStopBtn").style.display = "none";
+    $("bulkDoneBtn").style.display = "";
+    renderAll();
+  });
+  $("bulkStopBtn").addEventListener("click", ()=>{ bulkStopRequested = true; });
+  $("bulkDoneBtn").addEventListener("click", ()=>{
+    bulkOverlay.classList.remove("active");
+    $("bulkStopBtn").style.display = "";
+    toast("Bulk import finished");
+  });
+
+  // =====================================================================================
+  // BUILDING THE PAGE
+  // There is no framework here. Each render function builds a string of HTML and assigns
+  // it to a container's .innerHTML, which replaces that part of the page in one go.
+  // Because the markup is rebuilt from `data` every time, the screen can never disagree
+  // with the stored data — but it also means any text interpolated in must go through
+  // esc(), and that elements are new objects each time (so listeners are attached to
+  // containers, not to individual cards; see "event delegation" below).
+  // =====================================================================================
+  // ---------- HELPERS ----------
+  function coverToPlaceholder(img){
+    const div = document.createElement("div");
+    div.className = img.className + " placeholder";
+    div.textContent = img.getAttribute("data-title") || "";
+    img.replaceWith(div);
+  }
+  function checkCoverLoaded(img){
+    if(img.naturalWidth <= 1) coverToPlaceholder(img);
+  }
+  // Exposed on window: called from inline onload/onerror attributes, which can't see
+  // names declared inside this file's wrapping IIFE.
+  window.checkCoverLoaded = checkCoverLoaded;
+  window.coverToPlaceholder = coverToPlaceholder;
+  // Produces the <img> for a cover, or a text placeholder when there is no cover URL.
+  // The onload/onerror attributes call the two functions above: onerror catches a URL
+  // that fails outright, and onload catches Open Library's habit of answering "no cover"
+  // with a successful but blank 1x1 image, which would otherwise show as an empty box.
+  function coverImg(book, cls){
+    if(book.cover){
+      return `<img src="${esc(book.cover)}" class="${cls}" alt="" data-title="${esc(book.title.slice(0,20))}" onload="checkCoverLoaded(this)" onerror="coverToPlaceholder(this)">`;
+    }
+    return `<div class="${cls} placeholder">${esc(book.title.slice(0,20))}</div>`;
+  }
+  function starStr(rating){
+    rating = rating||0;
+    return "★".repeat(rating)+"☆".repeat(5-rating);
+  }
+  function allValues(field){
+    const s = new Set();
+    data.books.forEach(b=>(b[field]||[]).forEach(x=>s.add(x)));
+    return [...s].sort();
+  }
+  function seriesGroups(){
+    const map = {};
+    data.books.forEach(b=>{
+      if(b.series && b.series.name){
+        if(!map[b.series.name]) map[b.series.name] = [];
+        map[b.series.name].push(b);
+      }
+    });
+    return map;
+  }
+  function nextUpSuggestions(){
+    const groups = seriesGroups();
+    const suggestions = [];
+    Object.keys(groups).forEach(name=>{
+      const books = groups[name].filter(b=>b.series.num!=null);
+      const readNums = books.filter(b=>b.status==="read").map(b=>b.series.num);
+      if(!readNums.length) return;
+      const maxRead = Math.max(...readNums);
+      const candidates = books.filter(b=>b.status==="tbr" && b.series.num > maxRead).sort((a,b)=>a.series.num-b.series.num);
+      if(candidates.length) suggestions.push(candidates[0]);
+    });
+    return suggestions;
+  }
+
+  // Builds one book card. The pieces (badges, progress bar, buttons) vary by status, so
+  // they are assembled into strings first and dropped into the template at the end.
+  // The `${...}` placeholders inside backtick-quoted strings are template literals — a
+  // way of embedding values in text without lots of + concatenation.
+  // Each button carries data-action and data-id so one shared click handler can act on it.
+  function bookCardHTML(book, opts){
+    opts = opts || {};
+    let badges = "";
+    if(book.series && book.series.name) badges += `<span class="badge">${esc(book.series.name)}${book.series.num!=null?" #"+book.series.num:""}</span>`;
+    badges += `<span class="badge">${esc(book.format||"physical")}</span>`;
+    if(opts.nextUp) badges += `<span class="badge next-up">Next Up</span>`;
+    if(book.isTopRead) badges += `<span class="badge top">★ Top Read</span>`;
+    if(book.isReread) badges += `<span class="badge">Reread</span>`;
+    (book.shelves||[]).forEach(s=>badges+=`<span class="badge">${esc(s)}</span>`);
+    (book.tags||[]).forEach(t=>badges+=`<span class="badge">${esc(t)}</span>`);
+
+    let extra = "";
+    if(book.status==="reading"){
+      extra += `<div class="progress-bar"><div style="width:${book.progress||0}%"></div></div><div class="muted">${book.progress||0}% complete</div>`;
+    }
+    if(book.status==="read"){
+      extra += `<div class="stars">${starStr(book.rating)}</div>`;
+      if(book.notes) extra += `<div class="muted" style="margin-top:4px;">${esc(book.notes.slice(0,120))}${book.notes.length>120?"…":""}</div>`;
+    }
+    if(book.status==="dnf" && book.dnfReason){
+      extra += `<div class="muted">Dropped: ${esc(book.dnfReason)}</div>`;
+    }
+
+    let actions = `<button class="small secondary" data-action="edit" data-id="${book.id}">Edit</button>`;
+    if(book.status==="tbr"){
+      actions += `<button class="small" data-action="start-reading" data-id="${book.id}">Start Reading</button>`;
+      actions += book.priority==="someday"
+        ? `<button class="small secondary" data-tier-move="next" data-id="${book.id}">Move to Up Next</button>`
+        : `<button class="small secondary" data-tier-move="someday" data-id="${book.id}">Remove from Up Next</button>`;
+    }
+    if(book.status==="reading"){
+      actions += `<button class="small" data-action="finish-reading" data-id="${book.id}">Mark Finished</button>`;
+      actions += `<button class="small secondary" data-action="dnf-reading" data-id="${book.id}">DNF</button>`;
+    }
+    if(book.status==="read"){
+      actions += `<button class="small secondary" data-action="reread" data-id="${book.id}">Log Reread</button>`;
+    }
+    // Only worth offering once there is somewhere to send it.
+    if(store.profiles.length > 1){
+      actions += `<button class="small secondary" data-send-id="${book.id}">Send to\u2026</button>`;
+    }
+
+    const isSelected = selectedIds.has(book.id);
+    const checkbox = selectionMode ? `<label class="select-checkbox"><input type="checkbox" data-select-id="${book.id}" ${isSelected?"checked":""}></label>` : "";
+
+    return `<div class="book-card${isSelected?' selected':''}" draggable="${opts.draggable?'true':'false'}" data-id="${book.id}">
+      ${checkbox}
+      ${coverImg(book,"cover")}
+      <div class="book-info">
+        <div class="book-title">${esc(book.title)}</div>
+        <div class="book-author">${esc(book.author||"Unknown author")}</div>
+        <div class="badge-row">${badges}</div>
+        ${extra}
+        <div class="card-actions">${actions}</div>
+      </div>
+    </div>`;
+  }
+
+  // Shared by several tabs: draw a grid of cards, and show the "nothing here" message
+  // only when the list is empty.
+  function renderCardList(containerId, emptyId, books){
+    $(containerId).innerHTML = books.map(b=>bookCardHTML(b)).join("");
+    $(emptyId).style.display = books.length ? "none" : "";
+  }
+
+  // EVENT DELEGATION. Rather than attaching a listener to every card button (which would
+  // have to be redone after every re-render), one listener sits on the whole document.
+  // A click bubbles up to it, and e.target.closest("[data-action]") identifies which
+  // button, if any, was clicked. This keeps working no matter how often the cards are
+  // rebuilt, and costs one listener instead of hundreds.
+  // Event delegation for card actions across all views
+  document.body.addEventListener("click", (e)=>{
+    const actBtn = e.target.closest("[data-action]");
+    if(actBtn){
+      const id = actBtn.dataset.id;
+      const book = data.books.find(b=>b.id===id);
+      if(!book) return;
+      const action = actBtn.dataset.action;
+      if(action==="edit") openModal(book);
+      else if(action==="start-reading"){ book.status="reading"; book.progress=book.progress||0; book.dateStarted = book.dateStarted || new Date().toISOString().slice(0,10); saveData(); renderAll(); }
+      else if(action==="finish-reading"){ book.status="read"; book.progress=100; book.dateFinished = new Date().toISOString().slice(0,10); saveData(); renderAll(); openModal(book); }
+      else if(action==="dnf-reading"){ book.status="dnf"; book.dateFinished = new Date().toISOString().slice(0,10); saveData(); renderAll(); openModal(book); }
+      else if(action==="reread"){
+        const newBook = Object.assign({}, book, { id: uid(), isReread:true, status:"reading", progress:0, dateStarted: new Date().toISOString().slice(0,10), dateFinished:null, notes:"", quotes: (book.quotes||[]).slice() });
+        data.books.push(newBook);
+        saveData(); renderAll();
+        toast("New reread started — track it in Currently Reading");
+      }
+      return;
+    }
+    const tierBtn = e.target.closest("[data-tier-move]");
+    if(tierBtn){
+      const id = tierBtn.dataset.id;
+      const book = data.books.find(b=>b.id===id);
+      if(book){ book.priority = tierBtn.dataset.tierMove; saveData(); renderAll(); }
+      return;
+    }
+    // "Send to..." on a book card.
+    const sendBtn = e.target.closest("[data-send-id]");
+    if(sendBtn){
+      const book = data.books.find(b=>b.id===sendBtn.dataset.sendId);
+      if(book) openSendDialog(book);
+      return;
+    }
+    // "Add to my TBR" in the profile comparison: pulls a book the other way, out of
+    // another profile and into this one.
+    const grabBtn = e.target.closest("[data-grab-from]");
+    if(grabBtn){
+      const src = profileById(grabBtn.dataset.grabFrom);
+      const book = src && src.data.books.find(b=>b.id===grabBtn.dataset.grabId);
+      if(!book) return;
+      if(data.books.some(b=>sameBook(b, book))){ toast("Already in your library"); return; }
+      data.books.push(copyForProfile(book, src.name));
+      saveData(); renderAll();
+      toast("Added to your TBR");
+      return;
+    }
+  });
+
+  // ---------- DRAG & DROP ----------
+  // Shared by the TBR tiers and the Top 5 list: identical drag mechanics, with each caller
+  // supplying its row selector and what to persist once the row order settles.
+  let dragSrcId = null;
+  // Drag-and-drop reordering, using the browser's built-in HTML5 drag events.
+  // dragover fires continuously while dragging: it moves the dragged element within the
+  // DOM so the list reorders under the cursor, and calling preventDefault() is what marks
+  // this container as a valid drop target. On drop, the new on-screen order is read back
+  // out of the DOM and handed to onDrop so the caller can persist it.
+  function attachSortable(container, selector, onDrop){
+    if(container.dataset.dndAttached === "1") return;
+    container.dataset.dndAttached = "1";
+    container.addEventListener("dragstart", (e)=>{
+      const row = e.target.closest(selector);
+      if(!row) return;
+      dragSrcId = row.dataset.id;
+      row.classList.add("dragging");
+    });
+    container.addEventListener("dragend", (e)=>{
+      const row = e.target.closest(selector);
+      if(row) row.classList.remove("dragging");
+    });
+    container.addEventListener("dragover", (e)=>{
+      e.preventDefault();
+      const dragging = container.querySelector(".dragging");
+      if(!dragging) return;
+      const after = getDragAfterElement(container, e.clientY, selector);
+      if(after == null) container.appendChild(dragging);
+      else container.insertBefore(dragging, after);
+    });
+    container.addEventListener("drop", (e)=>{
+      e.preventDefault();
+      const ids = [...container.querySelectorAll(selector)].map(el=>el.dataset.id);
+      onDrop(ids);
+      saveData();
+    });
+  }
+  function attachDnD(container, tier){
+    attachSortable(container, ".book-card", (ids)=>{
+      const moved = data.books.find(b=>b.id===dragSrcId);
+      if(moved) moved.priority = tier;
+      // DOM order becomes sortIndex, which is what renderTBR sorts the tier by.
+      ids.forEach((id, idx)=>{
+        const b = data.books.find(x=>x.id===id);
+        if(b) b.sortIndex = idx;
+      });
+      renderTBR();
+    });
+  }
+  function attachTopReadsDnD(container){
+    attachSortable(container, "li[data-id]", (ids)=>{
+      ids.forEach((id, idx)=>{
+        const b = data.books.find(x=>x.id===id);
+        if(b) b.topReadRank = idx;
+      });
+      renderRankings();
+    });
+  }
+  function getDragAfterElement(container, y, selector){
+    const rows = [...container.querySelectorAll(`${selector||".book-card"}:not(.dragging)`)];
+    return rows.reduce((closest, child)=>{
+      const box = child.getBoundingClientRect();
+      const offset = y - box.top - box.height/2;
+      if(offset < 0 && offset > closest.offset) return {offset, element: child};
+      return closest;
+    }, {offset: -Infinity, element: null}).element;
+  }
+
+  // Each tab has its own render function below. They all follow the same shape:
+  // filter `data.books` down to the relevant books, sort them, build HTML, insert it.
+  // ---------- RENDER: TBR ----------
+  function renderTBR(){
+    const search = ($("tbrSearch").value||"").toLowerCase();
+    const shelfFilter = $("tbrShelfFilter").value;
+    const tagFilter = $("tbrGenreFilter").value;
+
+    // populate filter dropdowns once
+    const shelfSel = $("tbrShelfFilter");
+    if(shelfSel.dataset.built !== "1"){
+      allValues("shelves").forEach(s=>{ const o=document.createElement("option"); o.value=s; o.textContent=s; shelfSel.appendChild(o); });
+      shelfSel.dataset.built = "1";
+    }
+    const tagSel = $("tbrGenreFilter");
+    if(tagSel.dataset.built !== "1"){
+      allValues("tags").forEach(s=>{ const o=document.createElement("option"); o.value=s; o.textContent=s; tagSel.appendChild(o); });
+      tagSel.dataset.built = "1";
+    }
+
+    let tbrBooks = data.books.filter(b=>b.status==="tbr");
+    if(search) tbrBooks = tbrBooks.filter(b=>(b.title||"").toLowerCase().includes(search) || (b.author||"").toLowerCase().includes(search));
+    if(shelfFilter) tbrBooks = tbrBooks.filter(b=>(b.shelves||[]).includes(shelfFilter));
+    if(tagFilter) tbrBooks = tbrBooks.filter(b=>(b.tags||[]).includes(tagFilter));
+    tbrBooks.sort((a,b)=>(a.sortIndex||0)-(b.sortIndex||0));
+
+    const nextUpBooks = nextUpSuggestions();
+    const nextUpIds = new Set(nextUpBooks.map(b=>b.id));
+    const nextUpPanel = $("nextUpPanel");
+    if(nextUpBooks.length){
+      nextUpPanel.style.display = "";
+      $("nextUpCards").innerHTML = nextUpBooks.map(b=>bookCardHTML(b,{nextUp:true})).join("");
+    } else {
+      nextUpPanel.style.display = "none";
+    }
+
+    const upNext = tbrBooks.filter(b=>b.priority!=="someday");
+    const someday = tbrBooks.filter(b=>b.priority==="someday");
+
+    $("tbrUpNext").innerHTML = upNext.map(b=>bookCardHTML(b,{draggable:true, nextUp:nextUpIds.has(b.id)})).join("");
+    $("tbrUpNextEmpty").style.display = upNext.length ? "none" : "";
+    $("tbrSomeday").innerHTML = someday.map(b=>bookCardHTML(b,{draggable:true, nextUp:nextUpIds.has(b.id)})).join("");
+    $("tbrSomedayEmpty").style.display = someday.length ? "none" : "";
+
+    attachDnD($("tbrUpNext"), "next");
+    attachDnD($("tbrSomeday"), "someday");
+  }
+  $("tbrSearch").addEventListener("input", renderTBR);
+  $("tbrShelfFilter").addEventListener("change", renderTBR);
+  $("tbrGenreFilter").addEventListener("change", renderTBR);
+
+  $("pickForMeFromTbrBtn").addEventListener("click", pickForMe);
+
+  // ---------- RENDER: READING ----------
+  function renderReading(){
+    renderCardList("readingCards", "readingEmpty", data.books.filter(b=>b.status==="reading"));
+  }
+
+  // ---------- RENDER: READ ----------
+  // The Read tab supports search, a sort dropdown and a "rereads only" filter. The sort
+  // dropdown's value is something like "rating-desc", split here into field and direction.
+  function renderRead(){
+    const search = ($("readSearch").value||"").toLowerCase();
+    const sortBy = $("readSortBy").value;
+    const rereadsOnly = $("showRereadsOnly").checked;
+    let books = data.books.filter(b=>b.status==="read");
+    if(rereadsOnly) books = books.filter(b=>b.isReread);
+    if(search) books = books.filter(b=>(b.title||"").toLowerCase().includes(search) || (b.author||"").toLowerCase().includes(search));
+    const [key,dir] = sortBy.split("-");
+    books.sort((a,b)=>{
+      let av,bv;
+      if(key==="dateFinished"){ av=a.dateFinished||""; bv=b.dateFinished||""; }
+      else if(key==="rating"){ av=a.rating||0; bv=b.rating||0; }
+      else { av=(a.title||"").toLowerCase(); bv=(b.title||"").toLowerCase(); }
+      if(av<bv) return dir==="asc"?-1:1;
+      if(av>bv) return dir==="asc"?1:-1;
+      return 0;
+    });
+    $("readCards").innerHTML = books.map(b=>bookCardHTML(b)).join("");
+    $("readEmpty").style.display = books.length ? "none" : "";
+  }
+  $("readSearch").addEventListener("input", renderRead);
+  $("readSortBy").addEventListener("change", renderRead);
+  $("showRereadsOnly").addEventListener("change", renderRead);
+
+  // ---------- RENDER: DNF ----------
+  function renderDnf(){
+    renderCardList("dnfCards", "dnfEmpty", data.books.filter(b=>b.status==="dnf"));
+  }
+
+  // ---------- RENDER: SERIES ----------
+  function renderSeries(){
+    const groups = seriesGroups();
+    const names = Object.keys(groups).sort();
+    const suggestions = nextUpSuggestions(); // once, not once per series
+
+    const container = $("seriesList");
+    $("seriesEmpty").style.display = names.length ? "none" : "";
+    container.innerHTML = names.map(name=>{
+      const books = groups[name].slice().sort((a,b)=>(a.series.num||0)-(b.series.num||0));
+      const readCount = books.filter(b=>b.status==="read").length;
+      const total = books.length;
+      const pct = total ? Math.round(readCount/total*100) : 0;
+      const nextSuggestion = suggestions.find(b=>b.series.name===name);
+      return `<div class="series-card">
+        <div class="series-head">
+          <h3 style="margin:0;">${esc(name)}</h3>
+          <span class="muted">${readCount} of ${total} read (${pct}%)</span>
+        </div>
+        <div class="progress-bar"><div style="width:${pct}%"></div></div>
+        ${nextSuggestion ? `<div class="badge next-up" style="margin-top:6px; display:inline-block;">Next Up: ${esc(nextSuggestion.title)}</div>` : ""}
+        <div class="grid-cards" style="margin-top:10px;">${books.map(b=>bookCardHTML(b)).join("")}</div>
+      </div>`;
+    }).join("");
+  }
+
+  // Rankings are all derived from the books on the fly — nothing here is stored except
+  // the manual Top 5 order. Author and series statistics are accumulated into a lookup
+  // object keyed by name, then converted to an array so it can be sorted.
+  // ---------- RENDER: RANKINGS ----------
+  function renderRankings(){
+    // Rating decides the order until the list has been dragged; after that the manual rank
+    // wins, so a reorder isn't silently undone on the next render.
+    const topReads = data.books.filter(b=>b.status==="read" && b.isTopRead).sort((a,b)=>{
+      const ar = a.topReadRank, br = b.topReadRank;
+      if(ar!=null && br!=null) return ar-br;
+      if(ar!=null) return -1;
+      if(br!=null) return 1;
+      return (b.rating||0)-(a.rating||0);
+    }).slice(0,5);
+    $("topReadsList").innerHTML = topReads.map((b,i)=>`<li draggable="true" data-id="${b.id}"><span><span class="rank-num">${i+1}</span>${esc(b.title)} — <span class="muted">${esc(b.author||"")}</span></span><span class="stars">${starStr(b.rating)}</span></li>`).join("");
+    attachTopReadsDnD($("topReadsList"));
+    $("topReadsEmpty").style.display = topReads.length ? "none" : "";
+
+    const rereadCands = data.books.filter(b=>b.isRereadCandidate);
+    $("rereadCandList").innerHTML = rereadCands.map(b=>`<li>${esc(b.title)} <span class="muted">— ${esc(b.author||"")}</span></li>`).join("");
+    $("rereadCandEmpty").style.display = rereadCands.length ? "none" : "";
+
+    const authorStats = {};
+    data.books.filter(b=>b.status==="read" && b.author).forEach(b=>{
+      const a = b.author;
+      if(!authorStats[a]) authorStats[a] = {count:0, ratingSum:0, ratingCount:0};
+      authorStats[a].count++;
+      if(b.rating){ authorStats[a].ratingSum += b.rating; authorStats[a].ratingCount++; }
+    });
+    const topAuthors = Object.entries(authorStats).map(([name,s])=>({
+      name, count:s.count, avgRating: s.ratingCount ? (s.ratingSum/s.ratingCount) : 0
+    })).sort((a,b)=> b.count - a.count || b.avgRating - a.avgRating).slice(0,10);
+    $("topAuthorsList").innerHTML = topAuthors.map((a,i)=>`<li><span><span class="rank-num">${i+1}</span>${esc(a.name)}</span><span class="muted">${a.count} book${a.count!==1?"s":""}${a.avgRating?" · avg "+a.avgRating.toFixed(1)+"★":""}</span></li>`).join("");
+    $("topAuthorsEmpty").style.display = topAuthors.length ? "none" : "";
+
+    const groups = seriesGroups();
+    const seriesStats = Object.entries(groups).map(([name,books])=>{
+      const readBooks = books.filter(b=>b.status==="read" && b.rating);
+      const avg = readBooks.length ? readBooks.reduce((s,b)=>s+b.rating,0)/readBooks.length : 0;
+      return {name, avg, readCount: books.filter(b=>b.status==="read").length};
+    }).filter(s=>s.readCount>0).sort((a,b)=>b.avg-a.avg || b.readCount-a.readCount).slice(0,10);
+    $("topSeriesList").innerHTML = seriesStats.map((s,i)=>`<li><span><span class="rank-num">${i+1}</span>${esc(s.name)}</span><span class="muted">${s.avg?s.avg.toFixed(1)+"★ avg":""} · ${s.readCount} read</span></li>`).join("");
+    $("topSeriesEmpty").style.display = seriesStats.length ? "none" : "";
+
+    const quoteBooks = data.books.filter(b=>b.quotes && b.quotes.length);
+    $("quotesList").innerHTML = quoteBooks.map(b=>
+      b.quotes.map(q=>`<div class="quote-item">"${esc(q.text)}"<div class="qmeta">— ${esc(b.title)}${q.page?", p. "+esc(q.page):""}</div></div>`).join("")
+    ).join("");
+    $("quotesEmpty").style.display = quoteBooks.length ? "none" : "";
+  }
+
+  // ---------- RENDER: STATS ----------
+  function renderStats(){
+    const readBooks = chartsReadBooks();
+    const rereadBooks = data.books.filter(b=>b.isReread && b.status==="read");
+    const finishedDates = readBooks.filter(b=>b.dateFinished).map(b=>new Date(b.dateFinished));
+    let booksPerMonth = 0;
+    if(finishedDates.length){
+      const earliest = new Date(Math.min(...finishedDates.map(d=>d.getTime())));
+      const now = new Date();
+      const months = Math.max(1, (now.getFullYear()-earliest.getFullYear())*12 + (now.getMonth()-earliest.getMonth()) + 1);
+      booksPerMonth = (readBooks.length / months);
+    }
+    const totalPages = readBooks.reduce((s,b)=>s+(b.pages||0),0);
+    const longest = readBooks.reduce((max,b)=> (b.pages||0) > (max?max.pages:0) ? b : max, null);
+    let fastest = null, fastestDays = Infinity;
+    readBooks.forEach(b=>{
+      if(b.dateStarted && b.dateFinished){
+        const days = (new Date(b.dateFinished) - new Date(b.dateStarted)) / 86400000;
+        if(days >= 0 && days < fastestDays){ fastestDays = days; fastest = b; }
+      }
+    });
+    const dnfCount = data.books.filter(b=>b.status==="dnf").length;
+
+    const tiles = [
+      {num: readBooks.length, label:"Books Read"},
+      {num: booksPerMonth ? booksPerMonth.toFixed(1) : "—", label:"Books / Month (avg)"},
+      {num: totalPages.toLocaleString(), label:"Pages Read"},
+      {num: longest ? longest.pages : "—", label: longest ? "Longest Book: "+longest.title.slice(0,24) : "Longest Book"},
+      {num: fastest ? Math.round(fastestDays)+"d" : "—", label: fastest ? "Fastest Read: "+fastest.title.slice(0,24) : "Fastest Read"},
+      {num: rereadBooks.length, label:"Rereads"},
+      {num: dnfCount, label:"DNF Count"},
+      {num: data.books.filter(b=>b.status==="tbr").length, label:"TBR Size"},
+    ];
+    $("statGrid").innerHTML = tiles.map(t=>`<div class="stat-tile"><div class="num">${t.num}</div><div class="label">${esc(t.label)}</div></div>`).join("");
+  }
+
+  // =====================================================================================
+  // CHARTS
+  // Drawn by hand as HTML and SVG rather than with a charting library, to keep the file
+  // self-contained. SVG is a markup language for vector graphics: it uses its own tags
+  // (<path>, <circle>, <text>) with coordinates, and the browser draws them.
+  // Each chart also has a plain-table version, toggled by the "View as table" buttons,
+  // which is both an accessibility fallback and often just easier to read.
+  // =====================================================================================
+  // ---------- CHARTS ----------
+  // Every chart here reads from "read" books only (first reads, not rereads) — see the
+  // note above the panels. Each chart has a table-view twin toggled via chartViewMode.
+  const chartViewMode = { fiction:"chart", pagerange:"chart", genre:"chart", monthly:"chart" };
+
+  function chartsReadBooks(){
+    return data.books.filter(b=>b.status==="read" && !b.isReread);
+  }
+  function pctStr(n){ return (Math.round(n*10)/10).toLocaleString()+"%"; }
+
+  document.body.addEventListener("click", (e)=>{
+    const t = e.target.closest("[data-chart-toggle]");
+    if(!t) return;
+    const key = t.dataset.chartToggle;
+    chartViewMode[key] = chartViewMode[key]==="chart" ? "table" : "chart";
+    t.textContent = chartViewMode[key]==="chart" ? "View as table" : "View as chart";
+    renderCharts();
+  });
+
+  // Shared hover tooltip for every chart (delegated so it works for both HTML and SVG marks).
+  document.body.addEventListener("mouseover", (e)=>{
+    const el = e.target.closest("[data-tip]");
+    if(!el) return;
+    const tip = $("chartTooltip");
+    tip.innerHTML = el.getAttribute("data-tip");
+    tip.classList.add("show");
+  });
+  document.body.addEventListener("mousemove", (e)=>{
+    const tip = $("chartTooltip");
+    if(!tip.classList.contains("show")) return;
+    tip.style.left = e.clientX + "px";
+    tip.style.top = (e.clientY - 10) + "px";
+  });
+  document.body.addEventListener("mouseout", (e)=>{
+    const el = e.target.closest("[data-tip]");
+    if(!el) return;
+    if(e.relatedTarget && el.contains(e.relatedTarget)) return;
+    $("chartTooltip").classList.remove("show");
+  });
+
+  function renderCharts(){
+    renderFictionChart();
+    renderPageRangeChart();
+    renderGenreChart();
+    renderMonthlyPagesChart();
+  }
+
+  // ---- 1. Fiction vs Nonfiction (segmented bar — a 2-slice pie reads as one number, so this reads as a %) ----
+  function renderFictionChart(){
+    const books = chartsReadBooks();
+    let fiction = 0, nonfiction = 0, untagged = 0;
+    books.forEach(b=>{
+      const tags = (b.tags||[]).map(t=>t.toLowerCase());
+      if(tags.some(t=>t==="fiction")) fiction++;
+      else if(tags.some(t=>t==="nonfiction"||t==="non-fiction")) nonfiction++;
+      else untagged++;
+    });
+    const total = fiction + nonfiction;
+    const wrap = $("fictionChartWrap");
+    if(total===0){
+      wrap.innerHTML = `<div class="chart-empty">No read books are tagged "fiction" or "nonfiction" yet. Add one of those as a genre/mood tag on a book to populate this chart${untagged?` (${untagged} read book(s) untagged)`:""}.</div>`;
+      return;
+    }
+    const fictionPct = fiction/total*100, nonfictionPct = nonfiction/total*100;
+    if(chartViewMode.fiction==="table"){
+      wrap.innerHTML = `<table class="chart-table"><thead><tr><th>Category</th><th class="num-col">Count</th><th class="num-col">Share</th></tr></thead><tbody>
+        <tr><td>Fiction</td><td class="num-col">${fiction}</td><td class="num-col">${pctStr(fictionPct)}</td></tr>
+        <tr><td>Nonfiction</td><td class="num-col">${nonfiction}</td><td class="num-col">${pctStr(nonfictionPct)}</td></tr>
+        ${untagged?`<tr><td>Untagged</td><td class="num-col">${untagged}</td><td class="num-col">—</td></tr>`:""}
+      </tbody></table>`;
+      return;
+    }
+    const fictionLabel = fictionPct>=12 ? `<span style="color:#fff; font-size:0.76rem; font-weight:600;">${pctStr(fictionPct)}</span>` : "";
+    const nonfictionLabel = nonfictionPct>=12 ? `<span style="color:#fff; font-size:0.76rem; font-weight:600;">${pctStr(nonfictionPct)}</span>` : "";
+    wrap.innerHTML = `
+      <div style="display:flex; gap:2px; height:30px; border-radius:8px; overflow:hidden; background:var(--chart-surface);">
+        <div style="width:${fictionPct}%; background:var(--series-1); display:flex; align-items:center; justify-content:center;" data-tip="Fiction: ${fiction} book(s), ${pctStr(fictionPct)}">${fictionLabel}</div>
+        <div style="width:${nonfictionPct}%; background:var(--series-2); display:flex; align-items:center; justify-content:center;" data-tip="Nonfiction: ${nonfiction} book(s), ${pctStr(nonfictionPct)}">${nonfictionLabel}</div>
+      </div>
+      <div class="chart-legend">
+        <span class="key"><span class="swatch" style="background:var(--series-1);"></span>Fiction — ${fiction} (${pctStr(fictionPct)})</span>
+        <span class="key"><span class="swatch" style="background:var(--series-2);"></span>Nonfiction — ${nonfiction} (${pctStr(nonfictionPct)})</span>
+        ${untagged?`<span class="key muted">${untagged} untagged read book(s) excluded</span>`:""}
+      </div>`;
+  }
+
+  // ---- 2. Page length distribution (donut — ordered bins, so slices use the sequential ramp, light=short to dark=long) ----
+  const PAGE_BINS = [
+    {label:"Under 200", min:0, max:199, color:"var(--ordinal-1)"},
+    {label:"200–349", min:200, max:349, color:"var(--ordinal-2)"},
+    {label:"350–499", min:350, max:499, color:"var(--ordinal-3)"},
+    {label:"500–699", min:500, max:699, color:"var(--ordinal-4)"},
+    {label:"700+", min:700, max:Infinity, color:"var(--ordinal-5)"},
+  ];
+  function polarPoint(cx, cy, r, angleRad){
+    return [cx + r*Math.cos(angleRad), cy + r*Math.sin(angleRad)];
+  }
+  // Builds the outline of one donut segment. SVG paths are strings of drawing commands:
+  // M = move to, A = arc, L = line to, Z = close. Two arcs (outer edge, then inner edge
+  // back the other way) joined by two straight lines make a ring segment.
+  function donutSlicePath(cx, cy, rOuter, rInner, startAngle, endAngle){
+    const largeArc = (endAngle-startAngle) > Math.PI ? 1 : 0;
+    const [x1,y1] = polarPoint(cx,cy,rOuter,startAngle);
+    const [x2,y2] = polarPoint(cx,cy,rOuter,endAngle);
+    const [x3,y3] = polarPoint(cx,cy,rInner,endAngle);
+    const [x4,y4] = polarPoint(cx,cy,rInner,startAngle);
+    return `M${x1},${y1} A${rOuter},${rOuter} 0 ${largeArc} 1 ${x2},${y2} L${x3},${y3} A${rInner},${rInner} 0 ${largeArc} 0 ${x4},${y4} Z`;
+  }
+  function renderPageRangeChart(){
+    const books = chartsReadBooks();
+    const counts = PAGE_BINS.map(bin=>books.filter(b=>b.pages && b.pages>=bin.min && b.pages<=bin.max).length);
+    const unknown = books.filter(b=>!b.pages).length;
+    const total = counts.reduce((s,c)=>s+c,0);
+    const wrap = $("pageRangeChartWrap");
+    if(total===0){
+      wrap.innerHTML = `<div class="chart-empty">No read books have a page count yet. Add page counts (via ISBN lookup or manually) to populate this chart.</div>`;
+      return;
+    }
+    if(chartViewMode.pagerange==="table"){
+      wrap.innerHTML = `<table class="chart-table"><thead><tr><th>Page range</th><th class="num-col">Count</th><th class="num-col">Share</th></tr></thead><tbody>
+        ${PAGE_BINS.map((bin,i)=>`<tr><td>${bin.label}</td><td class="num-col">${counts[i]}</td><td class="num-col">${counts[i]?pctStr(counts[i]/total*100):"0%"}</td></tr>`).join("")}
+        ${unknown?`<tr><td>Unknown length</td><td class="num-col">${unknown}</td><td class="num-col">—</td></tr>`:""}
+      </tbody></table>`;
+      return;
+    }
+    const cx=100, cy=100, rOuter=90, rInner=54;
+    let angle = -Math.PI/2;
+    let slices = "";
+    let labels = "";
+    PAGE_BINS.forEach((bin,i)=>{
+      const count = counts[i];
+      if(!count) return;
+      const frac = count/total;
+      const start = angle, end = angle + frac*Math.PI*2;
+      const mid = (start+end)/2;
+      const path = donutSlicePath(cx,cy,rOuter,rInner,start,end);
+      const pct = frac*100;
+      slices += `<path class="donut-slice" d="${path}" fill="${bin.color}" stroke="var(--chart-surface)" stroke-width="2" data-tip="${esc(bin.label)}: ${count} book(s), ${pctStr(pct)}"></path>`;
+      if(pct>=6){
+        const [lx,ly] = polarPoint(cx,cy,(rOuter+rInner)/2, mid);
+        const inkColor = i===0 ? "#12151c" : "#ffffff";
+        labels += `<text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="middle" style="fill:${inkColor}; font-size:11px; font-weight:600;">${Math.round(pct)}%</text>`;
+      }
+      angle = end;
+    });
+    wrap.innerHTML = `
+      <svg class="chart-svg" viewBox="0 0 200 200" style="width:220px; height:220px; margin:0 auto; display:block;">
+        ${slices}${labels}
+      </svg>
+      <div class="chart-legend" style="justify-content:center;">
+        ${PAGE_BINS.map((bin,i)=>counts[i]?`<span class="key"><span class="swatch" style="background:${bin.color};"></span>${esc(bin.label)} — ${counts[i]} (${pctStr(counts[i]/total*100)})</span>`:"").join("")}
+        ${unknown?`<span class="key muted">${unknown} unknown-length read book(s) excluded</span>`:""}
+      </div>`;
+  }
+
+  // ---- 3. Books by genre/tag (horizontal bar, one hue — magnitude comparison, not identity) ----
+  function renderGenreChart(){
+    const books = chartsReadBooks();
+    const counts = {};
+    books.forEach(b=>(b.tags||[]).forEach(t=>{
+      const lc = t.toLowerCase();
+      if(lc==="fiction"||lc==="nonfiction"||lc==="non-fiction") return; // shown in the fiction/nonfiction chart instead
+      counts[t] = (counts[t]||0)+1;
+    }));
+    let entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+    const wrap = $("genreChartWrap");
+    if(!entries.length){
+      wrap.innerHTML = `<div class="chart-empty">No genre/mood tags on your read books yet. Add tags when editing a book to populate this chart.</div>`;
+      return;
+    }
+    if(entries.length>8){
+      const top = entries.slice(0,7);
+      const otherCount = entries.slice(7).reduce((s,e)=>s+e[1],0);
+      entries = top.concat([["Other", otherCount]]);
+    }
+    if(chartViewMode.genre==="table"){
+      wrap.innerHTML = `<table class="chart-table"><thead><tr><th>Genre / tag</th><th class="num-col">Books</th></tr></thead><tbody>
+        ${entries.map(([name,count])=>`<tr><td>${esc(name)}</td><td class="num-col">${count}</td></tr>`).join("")}
+      </tbody></table>`;
+      return;
+    }
+    const maxCount = Math.max(...entries.map(e=>e[1]));
+    wrap.innerHTML = entries.map(([name,count])=>{
+      const pct = (count/maxCount*100);
+      const showInline = pct>=22;
+      return `<div class="bar-row" style="display:flex; align-items:center; gap:8px; margin-bottom:8px;" data-tip="${esc(name)}: ${count} book(s)">
+        <div style="width:120px; flex-shrink:0; font-size:0.8rem; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(name)}</div>
+        <div style="flex:1; background:var(--chip); border-radius:6px; height:18px; position:relative;">
+          <div class="bar-fill" style="width:${pct}%; min-width:4px; background:var(--series-1); height:100%; border-radius:6px; display:flex; align-items:center; justify-content:flex-end; padding-right:${showInline?'6px':'0'};">
+            ${showInline?`<span style="color:#fff; font-size:0.74rem; font-weight:600;">${count}</span>`:""}
+          </div>
+        </div>
+        <div style="width:26px; text-align:right; font-size:0.78rem; font-variant-numeric:tabular-nums; color:var(--ink); ${showInline?'visibility:hidden;':''}">${count}</div>
+      </div>`;
+    }).join("");
+  }
+
+  // ---- 4. Pages read per month (line + area wash, one hue, trend over time) ----
+  function monthKey(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+  function monthLabel(key){
+    const [y,m] = key.split("-").map(Number);
+    return new Date(y, m-1, 1).toLocaleDateString(undefined,{month:"short", year:"2-digit"});
+  }
+  function niceMax(v){
+    if(v<=0) return 100;
+    const mag = Math.pow(10, Math.floor(Math.log10(v)));
+    return Math.ceil(v/mag) * mag; // round up to the next clean step at this value's magnitude
+  }
+  function renderMonthlyPagesChart(){
+    const books = chartsReadBooks().filter(b=>b.dateFinished && b.pages);
+    const wrap = $("monthlyPagesChartWrap");
+    if(!books.length){
+      wrap.innerHTML = `<div class="chart-empty">No read books with both a finish date and a page count yet.</div>`;
+      return;
+    }
+    const byMonth = {};
+    books.forEach(b=>{
+      const key = monthKey(new Date(b.dateFinished));
+      byMonth[key] = (byMonth[key]||0) + b.pages;
+    });
+    const keys = Object.keys(byMonth).sort();
+    const firstDate = new Date(keys[0]+"-01");
+    const lastDate = new Date();
+    const series = [];
+    let cursor = new Date(firstDate.getFullYear(), firstDate.getMonth(), 1);
+    const end = new Date(lastDate.getFullYear(), lastDate.getMonth(), 1);
+    while(cursor <= end){
+      const key = monthKey(cursor);
+      series.push({key, pages: byMonth[key]||0});
+      cursor.setMonth(cursor.getMonth()+1);
+    }
+
+    if(chartViewMode.monthly==="table"){
+      wrap.innerHTML = `<table class="chart-table"><thead><tr><th>Month</th><th class="num-col">Pages read</th></tr></thead><tbody>
+        ${series.map(p=>`<tr><td>${monthLabel(p.key)}</td><td class="num-col">${p.pages.toLocaleString()}</td></tr>`).join("")}
+      </tbody></table>`;
+      return;
+    }
+
+    const maxPages = Math.max(...series.map(p=>p.pages), 1);
+    const yMax = niceMax(maxPages);
+    const stepX = 46;
+    const plotW = Math.max(series.length-1,1) * stepX;
+    const leftPad = 46, rightPad = 24, topPad = 14, bottomPad = 28, plotH = 160;
+    const width = plotW + leftPad + rightPad;
+    const height = plotH + topPad + bottomPad;
+    const xAt = i => leftPad + i*stepX;
+    const yAt = v => topPad + plotH - (v/yMax)*plotH;
+
+    const yTicks = [0, yMax*0.25, yMax*0.5, yMax*0.75, yMax];
+    let gridSvg = yTicks.map(t=>`<line class="grid-line" x1="${leftPad}" x2="${width-rightPad}" y1="${yAt(t)}" y2="${yAt(t)}"></line><text x="${leftPad-8}" y="${yAt(t)+4}" text-anchor="end">${Math.round(t).toLocaleString()}</text>`).join("");
+
+    const linePoints = series.map((p,i)=>`${xAt(i)},${yAt(p.pages)}`).join(" ");
+    const areaPoints = `${xAt(0)},${yAt(0)} ` + series.map((p,i)=>`${xAt(i)},${yAt(p.pages)}`).join(" ") + ` ${xAt(series.length-1)},${yAt(0)}`;
+
+    const labelEvery = Math.max(1, Math.ceil(series.length/10));
+    let xLabels = "";
+    series.forEach((p,i)=>{
+      if(i % labelEvery === 0 || i===series.length-1){
+        xLabels += `<text x="${xAt(i)}" y="${height-8}" text-anchor="middle">${monthLabel(p.key)}</text>`;
+      }
+    });
+
+    let hitCircles = "";
+    series.forEach((p,i)=>{
+      hitCircles += `<circle cx="${xAt(i)}" cy="${yAt(p.pages)}" r="10" fill="transparent" data-tip="${monthLabel(p.key)}: ${p.pages.toLocaleString()} page(s)"></circle>`;
+    });
+    const last = series[series.length-1];
+    const endMarker = `<circle cx="${xAt(series.length-1)}" cy="${yAt(last.pages)}" r="4" fill="var(--series-1)" stroke="var(--chart-surface)" stroke-width="2"></circle>
+      <text x="${xAt(series.length-1)}" y="${yAt(last.pages)-10}" text-anchor="end" class="val-label">${last.pages.toLocaleString()}</text>`;
+
+    wrap.innerHTML = `<div class="chart-scroll"><svg class="chart-svg" viewBox="0 0 ${width} ${height}" style="width:${width}px; height:${height}px; min-width:100%;">
+        ${gridSvg}
+        <line class="axis-line" x1="${leftPad}" x2="${width-rightPad}" y1="${topPad+plotH}" y2="${topPad+plotH}"></line>
+        <polygon points="${areaPoints}" fill="var(--series-1)" fill-opacity="0.1" stroke="none"></polygon>
+        <polyline points="${linePoints}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline>
+        ${endMarker}
+        ${xLabels}
+        ${hitCircles}
+      </svg></div>`;
+  }
+
+  // Discovery: ways of choosing what to read next. "Pick for me" builds a weighted list
+  // by repeating each book once per weight point, so "Up Next" books are three times as
+  // likely to be drawn as "Someday" ones, then picks one at random.
+  // ---------- RENDER: DISCOVERY ----------
+  function pickForMe(){
+    const tbr = data.books.filter(b=>b.status==="tbr");
+    if(!tbr.length){ toast("Your TBR is empty!"); return; }
+    const weighted = [];
+    tbr.forEach(b=>{
+      const weight = b.priority==="someday" ? 1 : 3;
+      for(let i=0;i<weight;i++) weighted.push(b);
+    });
+    const pick = weighted[Math.floor(Math.random()*weighted.length)];
+    $("pickForMeResult").innerHTML = `<div class="pick-result">
+      ${coverImg(pick,"cover")}
+      <div class="book-title">${esc(pick.title)}</div>
+      <div class="book-author">${esc(pick.author||"")}</div>
+      <button class="small" data-action="start-reading" data-id="${pick.id}" style="margin-top:8px;">Start Reading</button>
+    </div>`;
+  }
+  $("pickForMeBtn").addEventListener("click", pickForMe);
+
+  function renderMoodPicker(){
+    const sel = $("moodPickerSelect");
+    const tags = allValues("tags");
+    const current = sel.value;
+    sel.innerHTML = tags.length ? tags.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join("") : `<option value="">No tags yet</option>`;
+    if(tags.includes(current)) sel.value = current;
+    renderMoodResults();
+  }
+  function renderMoodResults(){
+    const tag = $("moodPickerSelect").value;
+    renderCardList("moodPickResults", "moodPickEmpty",
+      data.books.filter(b=>b.status==="tbr" && (b.tags||[]).includes(tag)));
+  }
+  $("moodPickerSelect").addEventListener("change", renderMoodResults);
+
+  function renderRecs(){
+    const rated = data.books.filter(b=>b.status==="read" && b.rating>=4);
+    const tagScores = {};
+    rated.forEach(b=>(b.tags||[]).forEach(t=>{ tagScores[t] = (tagScores[t]||0) + b.rating; }));
+    const authorScores = {};
+    rated.forEach(b=>{ if(b.author) authorScores[b.author] = (authorScores[b.author]||0) + b.rating; });
+
+    const tbr = data.books.filter(b=>b.status==="tbr");
+    const scored = tbr.map(b=>{
+      let score = 0;
+      (b.tags||[]).forEach(t=>{ if(tagScores[t]) score += tagScores[t]; });
+      if(b.author && authorScores[b.author]) score += authorScores[b.author];
+      return {book:b, score};
+    }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,8);
+
+    renderCardList("recsCards", "recsEmpty", scored.map(x=>x.book));
+  }
+
+  // Reading challenges: either a 5x5 bingo grid or a simple checklist. These are stored
+  // in data.challenges rather than on any book.
+  // ---------- CHALLENGES ----------
+  $("addChallengeBtn").addEventListener("click", ()=>{
+    const name = prompt("Challenge name (e.g. 'Genre Bingo' or 'Decade Challenge'):");
+    if(!name) return;
+    const type = confirm("Use a 5x5 bingo grid? (Cancel = simple checklist)") ? "bingo" : "checklist";
+    let items = [];
+    if(type==="bingo"){
+      for(let i=0;i<25;i++) items.push({label:"Square "+(i+1), done:false});
+    } else {
+      const raw = prompt("Enter goals separated by commas (e.g. Read a 1800s book, Read a translated book, Read 5 nonfiction):");
+      items = (raw||"").split(",").map(s=>s.trim()).filter(Boolean).map(s=>({label:s, done:false}));
+    }
+    data.challenges.push({ id: uid(), name, type, items });
+    saveData();
+    renderChallenges();
+  });
+
+  function renderChallenges(){
+    const container = $("challengesList");
+    $("challengesEmpty").style.display = data.challenges.length ? "none" : "";
+    container.innerHTML = data.challenges.map(ch=>{
+      const doneCount = ch.items.filter(i=>i.done).length;
+      let body;
+      if(ch.type==="bingo"){
+        body = `<div class="bingo-grid">${ch.items.map((it,idx)=>`<div class="bingo-cell ${it.done?'done':''}" data-challenge="${ch.id}" data-item="${idx}">${esc(it.label)}</div>`).join("")}</div>`;
+      } else {
+        body = `<ul style="padding-left:18px; margin:8px 0;">${ch.items.map((it,idx)=>`<li style="margin-bottom:4px;"><label style="font-weight:normal; display:flex; gap:6px; align-items:center;"><input type="checkbox" ${it.done?'checked':''} data-challenge="${ch.id}" data-item="${idx}" style="width:auto;">${esc(it.label)}</label></li>`).join("")}</ul>`;
+      }
+      return `<div class="challenge-card">
+        <div class="series-head">
+          <h3 style="margin:0;">${esc(ch.name)}</h3>
+          <span class="muted">${doneCount} / ${ch.items.length} complete</span>
+          <button class="icon-btn" data-remove-challenge="${ch.id}" title="Delete challenge">✕</button>
+        </div>
+        ${body}
+      </div>`;
+    }).join("");
+  }
+  $("challengesList").addEventListener("click", (e)=>{
+    const cell = e.target.closest("[data-challenge][data-item]");
+    if(cell && cell.classList.contains("bingo-cell")){
+      const ch = data.challenges.find(c=>c.id===cell.dataset.challenge);
+      const item = ch.items[+cell.dataset.item];
+      item.done = !item.done;
+      saveData();
+      renderChallenges();
+      return;
+    }
+    const rm = e.target.closest("[data-remove-challenge]");
+    if(rm){
+      data.challenges = data.challenges.filter(c=>c.id!==rm.dataset.removeChallenge);
+      saveData();
+      renderChallenges();
+    }
+  });
+  $("challengesList").addEventListener("change", (e)=>{
+    const cb = e.target.closest("input[type=checkbox][data-challenge]");
+    if(cb){
+      const ch = data.challenges.find(c=>c.id===cb.dataset.challenge);
+      ch.items[+cb.dataset.item].done = cb.checked;
+      saveData();
+      renderChallenges();
+    }
+  });
+
+  // Every book, cover first — deliberately no badges, tags or status, since this tab exists
+  // to browse the shelf rather than to manage it.
+  let librarySort = "title";
+  const LIBRARY_SORTERS = {
+    title: (a,b)=>(a.title||"").localeCompare(b.title||""),
+    // Group an author's books together, then order them by title within that group.
+    // Books with no author listed go last rather than leading with a blank.
+    author: (a,b)=>{
+      const aa = (a.author||"").trim(), ba = (b.author||"").trim();
+      if(aa && !ba) return -1;
+      if(!aa && ba) return 1;
+      return aa.localeCompare(ba) || (a.title||"").localeCompare(b.title||"");
+    }
+  };
+  function renderLibrary(){
+    const books = data.books.slice().sort(LIBRARY_SORTERS[librarySort] || LIBRARY_SORTERS.title);
+    $("libraryCount").textContent = books.length
+      ? `${books.length} book${books.length!==1?"s":""}` : "";
+    $("libraryGrid").innerHTML = books.map(b=>`<div class="library-item">
+      ${coverImg(b,"cover")}
+      <div class="library-title">${esc(b.title)}</div>
+      <div class="library-author">${esc(b.author||"")}</div>
+    </div>`).join("");
+    $("libraryEmpty").style.display = books.length ? "none" : "";
+  }
+  $("librarySort").addEventListener("change", (e)=>{
+    librarySort = e.target.value;
+    renderLibrary();
+  });
+
+  // ---------- PROFILES ----------
+  // Switching is just: flush the current library, repoint `data`, redraw. Because `data`
+  // is a reference into the active profile rather than a copy, nothing else has to change.
+  function switchProfile(id){
+    if(!profileById(id) || id===store.activeId) return;
+    saveData();                 // flush the outgoing profile before letting go of it
+    store.activeId = id;
+    data = activeProfile().data;
+    if(selectionMode) setSelectionMode(false);  // selected ids belong to the old library
+    saveData();
+    applyProfileTheme();
+    renderProfileUI();
+    renderAll();
+    toast("Switched to " + activeProfile().name);
+  }
+
+  // The active profile's colour becomes the app's accent, so a glance at the screen says
+  // whose library is open. --accent-ink (the text that sits on top of the accent) is
+  // derived from the colour's brightness rather than fixed, so a pale accent still gets
+  // dark text instead of unreadable white-on-pale.
+  function applyProfileTheme(){
+    const p = activeProfile();
+    document.documentElement.style.setProperty("--accent", p.color);
+    document.documentElement.style.setProperty("--accent-ink", readableInk(p.color));
+  }
+  function readableInk(hex){
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex||""));
+    if(!m) return "#ffffff";
+    const n = parseInt(m[1],16);
+    // Rec. 601 luma: weights red/green/blue by how bright the eye finds each channel.
+    const luma = (0.299*((n>>16)&255) + 0.587*((n>>8)&255) + 0.114*(n&255)) / 255;
+    return luma > 0.6 ? "#12181f" : "#ffffff";
+  }
+
+  // The header chip and switcher.
+  function renderProfileUI(){
+    const p = activeProfile();
+    $("activeProfileEmoji").textContent = p.emoji;
+    $("profileSelect").innerHTML = store.profiles
+      .map(x=>`<option value="${esc(x.id)}"${x.id===p.id?" selected":""}>${esc(x.name)}</option>`).join("");
+    // Naming the tab matters when two profiles are open in two windows.
+    document.title = p.name + " — Book Tracker";
+  }
+  $("profileSelect").addEventListener("change", (e)=>switchProfile(e.target.value));
+
+  // The rows inside the Profiles dialog.
+  function renderProfileList(){
+    $("profileList").innerHTML = store.profiles.map(p=>{
+      const n = p.data.books.length;
+      const swatches = PROFILE_COLORS.map(c=>
+        `<button class="swatch${c.toLowerCase()===String(p.color).toLowerCase()?" sel":""}" style="background:${c};" data-prof-color="${c}" data-prof="${esc(p.id)}" title="Use this colour"></button>`
+      ).join("");
+      return `<div class="profile-row${p.id===store.activeId?" is-active":""}">
+        <input class="emoji-input" data-prof-emoji="${esc(p.id)}" value="${esc(p.emoji)}" maxlength="4" title="Emoji">
+        <input class="name-input" data-prof-name="${esc(p.id)}" value="${esc(p.name)}" maxlength="40" title="Profile name">
+        <span class="swatches">${swatches}</span>
+        ${p.id===store.activeId
+          ? `<span class="badge">Active</span>`
+          : `<button class="small secondary" data-prof-use="${esc(p.id)}">Switch to</button>`}
+        <button class="small secondary" data-prof-dup="${esc(p.id)}">Duplicate</button>
+        <button class="small danger" data-prof-del="${esc(p.id)}">Delete</button>
+        <span class="row-meta">${n} book${n===1?"":"s"} · added ${esc(p.created)}</span>
+      </div>`;
+    }).join("");
+  }
+
+  // Renaming and re-emoji-ing save on every keystroke. The list is deliberately NOT
+  // re-rendered here — that would rebuild the input under the cursor and lose the caret.
+  $("profileList").addEventListener("input", (e)=>{
+    const nameEl = e.target.closest("[data-prof-name]");
+    if(nameEl){
+      const p = profileById(nameEl.dataset.profName);
+      if(p){ p.name = nameEl.value.trim() || "Unnamed"; saveData(); renderProfileUI(); }
+      return;
+    }
+    const emojiEl = e.target.closest("[data-prof-emoji]");
+    if(emojiEl){
+      const p = profileById(emojiEl.dataset.profEmoji);
+      if(p){ p.emoji = emojiEl.value.trim() || "📚"; saveData(); renderProfileUI(); }
+    }
+  });
+
+  $("profileList").addEventListener("click", (e)=>{
+    const sw = e.target.closest("[data-prof-color]");
+    if(sw){
+      const p = profileById(sw.dataset.prof);
+      if(p){
+        p.color = sw.dataset.profColor;
+        saveData(); renderProfileList();
+        if(p.id===store.activeId) applyProfileTheme();
+      }
+      return;
+    }
+    const use = e.target.closest("[data-prof-use]");
+    if(use){ switchProfile(use.dataset.profUse); renderProfileList(); return; }
+
+    const dup = e.target.closest("[data-prof-dup]");
+    if(dup){
+      const p = profileById(dup.dataset.profDup);
+      if(!p) return;
+      // Deep copy through JSON so the clone shares no objects at all with the original:
+      // editing a book in one profile must never reach into the other.
+      store.profiles.push(makeProfile(p.name + " (copy)", {
+        emoji: p.emoji, color: p.color, data: JSON.parse(JSON.stringify(p.data))
+      }));
+      saveData(); renderProfileList(); renderProfileUI();
+      toast("Duplicated " + p.name);
+      return;
+    }
+
+    const del = e.target.closest("[data-prof-del]");
+    if(del){
+      const p = profileById(del.dataset.profDel);
+      if(!p) return;
+      if(store.profiles.length===1){ toast("You need at least one profile"); return; }
+      const n = p.data.books.length;
+      if(!confirm(`Delete the profile "${p.name}" and all ${n} book${n===1?"":"s"} in it?\n\nThis cannot be undone. Export it first if you might want it back.`)) return;
+      store.profiles = store.profiles.filter(x=>x.id!==p.id);
+      if(store.activeId===p.id){
+        store.activeId = store.profiles[0].id;
+        data = activeProfile().data;
+        applyProfileTheme();
+        renderAll();
+      }
+      saveData(); renderProfileList(); renderProfileUI();
+      toast("Profile deleted");
+    }
+  });
+
+  $("addProfileBtn").addEventListener("click", ()=>{
+    const name = $("newProfileName").value.trim();
+    if(!name){ toast("Give the profile a name"); return; }
+    // Hand out palette colours in turn so two profiles do not look alike by default.
+    store.profiles.push(makeProfile(name, { color: PROFILE_COLORS[store.profiles.length % PROFILE_COLORS.length] }));
+    $("newProfileName").value = "";
+    saveData(); renderProfileList(); renderProfileUI(); renderCompare();
+    toast("Profile added");
+  });
+  $("newProfileName").addEventListener("keydown", (e)=>{ if(e.key==="Enter") $("addProfileBtn").click(); });
+
+  $("manageProfilesBtn").addEventListener("click", ()=>{
+    renderProfileList();
+    $("profileOverlay").classList.add("active");
+  });
+  $("closeProfilesBtn").addEventListener("click", ()=>{
+    $("profileOverlay").classList.remove("active");
+    renderCompare();
+  });
+  $("profileOverlay").addEventListener("click", (e)=>{
+    if(e.target === $("profileOverlay")){ $("profileOverlay").classList.remove("active"); renderCompare(); }
+  });
+
+  // ---------- SENDING A BOOK BETWEEN PROFILES ----------
+  // Used both by the "Send to…" button and by the comparison panel to decide whether a
+  // book is already present. ISBNs settle it when both sides have one; otherwise fall back
+  // to title + author, which is what a hand-entered book will have.
+  function sameBook(a,b){
+    const ia = String(a.isbn||"").replace(/[^0-9Xx]/g,"");
+    const ib = String(b.isbn||"").replace(/[^0-9Xx]/g,"");
+    if(ia && ib) return ia===ib;
+    return String(a.title||"").trim().toLowerCase() === String(b.title||"").trim().toLowerCase()
+        && String(a.author||"").trim().toLowerCase() === String(b.author||"").trim().toLowerCase();
+  }
+
+  // Copies the book itself but none of the reading history: the recipient gets a fresh TBR
+  // entry, not the sender's rating, notes, progress or dates.
+  function copyForProfile(book, fromName){
+    return makeBook({
+      isbn: book.isbn, title: book.title, author: book.author, cover: book.cover,
+      series: book.series ? Object.assign({}, book.series) : null,
+      format: book.format, pages: book.pages,
+      status: "tbr", priority: "someday",
+      shelves: (book.shelves||[]).slice(), tags: (book.tags||[]).slice(),
+      notes: fromName ? ("From " + fromName) : ""
+    });
+  }
+
+  let sendBookId = null;
+  function openSendDialog(book){
+    sendBookId = book.id;
+    $("sendBookLabel").textContent = "“" + book.title + "” will be added to the chosen profile's TBR. Your rating, notes and progress stay here.";
+    const others = store.profiles.filter(p=>p.id!==store.activeId);
+    $("sendTargets").innerHTML = others.length
+      ? others.map(p=>`<button class="secondary send-target" data-send-to="${esc(p.id)}">${esc(p.emoji)} ${esc(p.name)}</button>`).join("")
+      : `<p class="muted">There are no other profiles yet.</p>`;
+    $("sendOverlay").classList.add("active");
+  }
+  function closeSendDialog(){ $("sendOverlay").classList.remove("active"); sendBookId = null; }
+  $("sendCancelBtn").addEventListener("click", closeSendDialog);
+  $("sendOverlay").addEventListener("click", (e)=>{ if(e.target === $("sendOverlay")) closeSendDialog(); });
+
+  $("sendTargets").addEventListener("click", (e)=>{
+    const btn = e.target.closest("[data-send-to]");
+    if(!btn) return;
+    const target = profileById(btn.dataset.sendTo);
+    const book = data.books.find(b=>b.id===sendBookId);
+    if(!target || !book) return;
+    if(target.data.books.some(b=>sameBook(b, book))){
+      toast(target.name + " already has that one");
+      closeSendDialog();
+      return;
+    }
+    target.data.books.push(copyForProfile(book, activeProfile().name));
+    saveData();
+    closeSendDialog();
+    renderCompare();
+    toast("Sent to " + target.name);
+  });
+
+  // ---------- COMPARE PROFILES ----------
+  // Reads another profile's library without switching to it: what you have both finished,
+  // and what they rated 4 or better that you do not own at all.
+  function renderCompare(){
+    const sel = $("compareSelect");
+    const others = store.profiles.filter(p=>p.id!==store.activeId);
+    if(!others.length){
+      $("compareCols").innerHTML = "";
+      $("compareEmpty").style.display = "";
+      sel.style.display = "none";
+      return;
+    }
+    sel.style.display = "";
+    $("compareEmpty").style.display = "none";
+    // Keep whatever was chosen selected across re-renders, as long as it still exists.
+    const want = others.some(p=>p.id===sel.value) ? sel.value : others[0].id;
+    sel.innerHTML = others.map(p=>`<option value="${esc(p.id)}"${p.id===want?" selected":""}>${esc(p.emoji)} ${esc(p.name)}</option>`).join("");
+
+    const other = profileById(want);
+    const myRead = data.books.filter(b=>b.status==="read");
+    const theirRead = other.data.books.filter(b=>b.status==="read");
+    const rate = r => r ? starStr(r) : "unrated";
+
+    const both = myRead
+      .map(b=>({ mine:b, theirs: theirRead.find(t=>sameBook(t,b)) }))
+      .filter(x=>x.theirs);
+
+    const recs = theirRead
+      .filter(t=>(t.rating||0)>=4 && !data.books.some(b=>sameBook(b,t)))
+      .sort((a,b)=>(b.rating||0)-(a.rating||0));
+
+    $("compareCols").innerHTML = `
+      <div>
+        <h3>Both read (${both.length})</h3>
+        ${both.length
+          ? `<ul class="cmp-list">${both.map(x=>`<li>
+              <div class="cmp-title">${esc(x.mine.title)}</div>
+              <div class="cmp-sub">You ${rate(x.mine.rating)} · ${esc(other.name)} ${rate(x.theirs.rating)}</div>
+            </li>`).join("")}</ul>`
+          : `<p class="muted">Nothing in common yet.</p>`}
+      </div>
+      <div>
+        <h3>${esc(other.name)} rated 4★+, you haven't read (${recs.length})</h3>
+        ${recs.length
+          ? `<ul class="cmp-list">${recs.slice(0,50).map(t=>`<li>
+              <div class="cmp-title">${esc(t.title)}</div>
+              <div class="cmp-sub">${esc(t.author||"Unknown author")} · ${starStr(t.rating)}</div>
+              <button class="small secondary" style="margin-top:5px;" data-grab-from="${esc(other.id)}" data-grab-id="${esc(t.id)}">Add to my TBR</button>
+            </li>`).join("")}</ul>`
+          : `<p class="muted">None of their favourites are missing from your library.</p>`}
+      </div>`;
+  }
+  $("compareSelect").addEventListener("change", renderCompare);
+
+  // Redraws every tab. Called after any change to the data, and once at the very bottom
+  // of this file to draw the page when it first loads. It is simpler (and fast enough) to
+  // rebuild everything than to work out precisely which parts a change affected.
+  // ---------- MASTER RENDER ----------
+  function renderAll(){
+    renderTBR();
+    renderReading();
+    renderRead();
+    renderDnf();
+    renderSeries();
+    renderRankings();
+    renderStats();
+    renderCharts();
+    renderMoodPicker();
+    renderRecs();
+    renderChallenges();
+    renderLibrary();
+    renderCompare();
+  }
+
+  // Write once on load. On a first run, or the first run after upgrading from a
+  // single-library version of this file, the profile structure so far exists only in
+  // memory — without this it would not reach storage until the reader happened to change
+  // something, and the migration would be redone on every load.
+  saveData();
+  // First paint: the profile's colour and name go up before the library is drawn.
+  applyProfileTheme();
+  renderProfileUI();
+  renderAll();
+})();
+</script>
+</body>
+</html>
