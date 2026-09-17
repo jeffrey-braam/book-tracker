@@ -91,6 +91,14 @@
   .badge{background:var(--chip); border:1px solid var(--border); border-radius:10px; padding:1px 8px; font-size:0.68rem; color:var(--muted); font-weight:600;}
   .badge.next-up{background:var(--gold); color:#fff; border-color:var(--gold);}
   .badge.top{background:var(--gold); color:#fff; border-color:var(--gold);}
+  /* Wishlist = on the TBR but not owned yet; a dashed outline reads as "not here yet". */
+  .badge.wishlist{background:transparent; border:1px dashed var(--accent); color:var(--accent);}
+  /* Cover and title on cards open the read-only detail view. The title is a real <button>
+     (keyboard reachable), so the global button look is reset to plain text here. */
+  .detail-link{cursor:pointer; flex-shrink:0; display:block;}
+  /* Size and weight still come from .book-title / .library-title. */
+  button.title-link{display:block; background:none; border:none; padding:0; color:inherit; text-align:left; cursor:pointer; border-radius:0;}
+  button.title-link:hover{text-decoration:underline; filter:none;}
   .progress-bar{background:var(--chip); border-radius:6px; height:8px; overflow:hidden; margin:6px 0; border:1px solid var(--border);}
   .progress-bar > div{background:var(--accent); height:100%;}
   .stars{color:var(--gold); font-size:0.85rem; letter-spacing:1px;}
@@ -126,6 +134,22 @@
   .stat-tile{background:var(--chip); border:1px solid var(--border); border-radius:10px; padding:14px; text-align:center;}
   .stat-tile .num{font-size:1.5rem; font-weight:700; color:var(--accent);}
   .stat-tile .label{font-size:0.76rem; color:var(--muted); margin-top:2px;}
+  .stat-tile .progress-bar{margin:8px 0 0;}
+  .goal-row{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; font-size:0.84rem;}
+  .goal-row input{width:90px;}
+  /* Uploaded cover in the Add/Edit dialog. */
+  .cover-upload-row{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .cover-upload-preview{width:40px; height:60px; object-fit:cover; border-radius:3px; border:1px solid var(--border);}
+  /* Read-only book detail dialog. */
+  .detail-head{display:flex; gap:14px; margin-bottom:14px;}
+  .detail-head .cover{width:110px; height:165px; flex-shrink:0; border-radius:6px; object-fit:cover; background:var(--chip); border:1px solid var(--border);}
+  .detail-head .cover.placeholder{display:flex; align-items:center; justify-content:center; text-align:center; font-size:0.72rem; color:var(--muted); padding:6px;}
+  .detail-head h2{margin:0 0 4px;}
+  .detail-grid{display:grid; grid-template-columns:max-content 1fr; gap:5px 14px; font-size:0.85rem; margin:0 0 12px;}
+  .detail-grid dt{color:var(--muted); font-weight:600;}
+  .detail-grid dd{margin:0; overflow-wrap:anywhere;}
+  .detail-section h3{margin:12px 0 6px;}
+  .detail-notes{white-space:pre-wrap; font-size:0.86rem; line-height:1.45; overflow-wrap:anywhere;}
 
   /* A checkbox with an explanatory second line, used by the bulk importer. */
   .bulk-choice{display:flex; gap:8px; align-items:flex-start; font-size:0.84rem; font-weight:600; color:var(--ink); cursor:pointer;}
@@ -217,6 +241,19 @@
      It is always in the page but invisible (opacity:0) until the .show class is added. */
   .toast{position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:8px 16px; border-radius:8px; font-size:0.82rem; opacity:0; pointer-events:none; transition:opacity 0.25s; z-index:200;}
   .toast.show{opacity:1;}
+  /* A toast carrying an action button (e.g. Undo) has to accept clicks while it shows. */
+  .toast.show.has-action{pointer-events:auto;}
+  .toast-action{margin-left:12px; background:transparent; color:inherit; border:1px solid currentColor; padding:2px 10px; font-size:0.78rem; border-radius:6px;}
+  /* The backup reminder in the header: small muted text with an inline link-style button. */
+  .backup-nudge{font-size:0.76rem; color:var(--gold); display:inline-flex; gap:6px; align-items:center;}
+  .link-btn{background:none; border:none; padding:0; color:var(--accent); font-size:inherit; font-weight:600; text-decoration:underline; cursor:pointer;}
+  .bulk-group{display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap;}
+  #bulkLabelInput{min-width:190px;}
+  /* Up/down buttons: the reorder path that works without drag-and-drop (touch, keyboard). */
+  .move-btns{display:inline-flex; gap:2px;}
+  .move-btns button{padding:4px 7px; min-width:28px;}
+  .move-btns button:disabled{opacity:0.35; cursor:default; filter:none;}
+  .top-list li .move-btns{margin-left:8px;}
   /* The bar that appears when "Select Books" mode is switched on. */
   .selection-bar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:50; font-size:0.85rem;}
   .select-checkbox{position:absolute; top:6px; left:6px; z-index:2; background:var(--panel); border-radius:4px; padding:2px 3px; border:1px solid var(--border); line-height:0;}
@@ -240,6 +277,12 @@
         <select id="profileSelect" class="profile-switch" title="Switch profile"></select>
       </span>
       <button class="secondary small" id="manageProfilesBtn">Manage Profiles</button>
+      <!-- Backup nudge: only shown once this profile's last backup is old, missing, or far
+           behind the library's size. A reminder, not a blocker. -->
+      <span class="backup-nudge" id="backupNudge" style="display:none;">
+        <span id="backupNudgeText"></span>
+        <button type="button" class="link-btn" id="backupNudgeBtn">Back up now</button>
+      </span>
     </div>
   </div>
   <div class="head-actions">
@@ -264,6 +307,26 @@
   <button class="secondary small" id="clearCoversBtn">Clear Covers</button>
   <button class="danger small" id="deleteSelectedBtn">Delete Selected</button>
   <button class="secondary small" id="exitSelectModeBtn">Done</button>
+  <!-- Bulk edits: the same changes the Edit dialog and card buttons make, applied to
+       every selected book at once. -->
+  <span class="bulk-group">
+    <input type="text" id="bulkLabelInput" placeholder="tags or shelves, comma-separated" aria-label="Tags or shelves to add">
+    <select id="bulkLabelKind" aria-label="Add as">
+      <option value="tags">as genre/mood tags</option>
+      <option value="shelves">as shelves</option>
+    </select>
+    <button class="secondary small" id="bulkAddLabelsBtn">Add to Selected</button>
+  </span>
+  <span class="bulk-group">
+    <select id="bulkStatusSelect" aria-label="New status">
+      <option value="">Move selected to…</option>
+      <option value="tbr">To Be Read</option>
+      <option value="reading">Currently Reading</option>
+      <option value="read">Read</option>
+      <option value="dnf">Did Not Finish</option>
+    </select>
+    <button class="secondary small" id="bulkStatusBtn">Apply</button>
+  </span>
 </div>
 
 <!-- The tab buttons. Each carries a data-view attribute naming the panel it reveals,
@@ -291,6 +354,11 @@
     <div class="filter-row">
       <input type="text" class="toolbar-search" id="tbrSearch" placeholder="Search title or author...">
       <select id="tbrShelfFilter"><option value="">All shelves</option></select>
+      <select id="tbrOwnedFilter" aria-label="Owned or wishlist">
+        <option value="">Owned + wishlist</option>
+        <option value="owned">Owned only</option>
+        <option value="wishlist">Wishlist only</option>
+      </select>
       <select id="tbrGenreFilter"><option value="">All genres/moods</option></select>
       <button class="secondary small" id="pickForMeFromTbrBtn">🎲 Pick for me</button>
     </div>
@@ -311,6 +379,9 @@
 <!-- READING VIEW -->
 <div class="view" id="view-reading">
   <div class="panel">
+    <div class="filter-row">
+      <input type="text" class="toolbar-search" id="readingSearch" placeholder="Search title or author...">
+    </div>
     <div class="grid-cards" id="readingCards"></div>
     <div class="empty-msg" id="readingEmpty" style="display:none;">Nothing in progress. Move a book from TBR to start reading.</div>
   </div>
@@ -337,6 +408,9 @@
 <!-- DNF VIEW -->
 <div class="view" id="view-dnf">
   <div class="panel">
+    <div class="filter-row">
+      <input type="text" class="toolbar-search" id="dnfSearch" placeholder="Search title or author...">
+    </div>
     <div class="grid-cards" id="dnfCards"></div>
     <div class="empty-msg" id="dnfEmpty" style="display:none;">No DNFs — nice.</div>
   </div>
@@ -345,7 +419,14 @@
 <!-- SERIES VIEW -->
 <div class="view" id="view-series">
   <div class="panel">
-    <h2>Series Progress</h2>
+    <div class="series-head" style="margin-bottom:12px;">
+      <h2 style="margin:0;">Series Progress</h2>
+      <select id="seriesSort" aria-label="Sort series">
+        <option value="name">Sort: Name A–Z</option>
+        <option value="complete">Sort: Closest to complete</option>
+        <option value="nextup">Sort: Next Up available first</option>
+      </select>
+    </div>
     <div id="seriesList"></div>
     <div class="empty-msg" id="seriesEmpty" style="display:none;">No series tracked yet. Add a series name when adding/editing a book.</div>
   </div>
@@ -356,7 +437,7 @@
   <div class="two-col">
     <div class="panel">
       <h2>🏆 Top 5 Reads</h2>
-      <p class="muted">Mark books as a top read from the Read tab. Drag to reorder.</p>
+      <p class="muted">Mark books as a top read from the Read tab. Drag, or use ↑ ↓, to reorder.</p>
       <ul class="top-list" id="topReadsList"></ul>
       <div class="empty-msg" id="topReadsEmpty" style="display:none;">No top reads marked yet.</div>
     </div>
@@ -387,6 +468,12 @@
 <div class="view" id="view-stats">
   <div class="panel">
     <h2>Reading Pace</h2>
+    <!-- Yearly goal: per profile, per calendar year. Clearing the box and saving removes it. -->
+    <div class="goal-row">
+      <label for="goalInput" id="goalLabel">Reading goal</label>
+      <input type="number" id="goalInput" min="1" max="9999" placeholder="e.g. 50">
+      <button class="secondary small" id="goalSaveBtn">Save goal</button>
+    </div>
     <div class="stat-grid" id="statGrid"></div>
   </div>
 
@@ -476,8 +563,9 @@
   <div class="panel">
     <div class="series-head">
       <h2>📚 Library</h2>
-      <div style="display:flex; align-items:center; gap:10px;">
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <span class="muted" id="libraryCount"></span>
+        <input type="text" id="librarySearch" placeholder="Search title or author..." aria-label="Search library">
         <select id="librarySort">
           <option value="title">Sort: Title A–Z</option>
           <option value="author">Sort: Author A–Z</option>
@@ -524,6 +612,16 @@
       <label>Cover image URL</label>
       <input type="text" id="fieldCover" placeholder="https://...">
     </div>
+    <div class="form-row">
+      <label>Or upload a cover image (shown instead of the URL)</label>
+      <div class="cover-upload-row">
+        <img id="coverUploadPreview" class="cover-upload-preview" alt="Uploaded cover" style="display:none;">
+        <button type="button" class="secondary small" id="coverUploadBtn">Upload cover…</button>
+        <button type="button" class="secondary small" id="coverUploadRemoveBtn" style="display:none;">Remove upload</button>
+        <input type="file" id="coverUploadFile" accept="image/*" style="display:none;">
+      </div>
+      <div class="lookup-status" id="coverUploadStatus"></div>
+    </div>
     <div class="form-row-inline">
       <div class="form-row">
         <label>Series name</label>
@@ -562,6 +660,13 @@
       <select id="fieldPriority">
         <option value="next">Up Next</option>
         <option value="someday">Someday</option>
+      </select>
+    </div>
+    <div class="form-row" id="ownedRow">
+      <label for="fieldOwned">Owned or wishlist</label>
+      <select id="fieldOwned">
+        <option value="owned">Owned</option>
+        <option value="wishlist">Wishlist (want to get)</option>
       </select>
     </div>
     <div class="form-row" id="progressRow" style="display:none;">
@@ -617,6 +722,18 @@
       <button type="button" class="danger" id="deleteBookBtn" style="display:none; margin-right:auto;">Delete</button>
       <button type="button" class="secondary" id="cancelBookBtn">Cancel</button>
       <button type="button" id="saveBookBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- BOOK DETAIL DIALOG. Read-only; opened by clicking a book's cover or title. Edit
+     hands over to the Add/Edit dialog, which stays the only way to change a book. -->
+<div class="modal-overlay" id="detailOverlay">
+  <div class="modal" role="dialog" aria-labelledby="detailTitle">
+    <div id="detailBody"></div>
+    <div class="modal-actions">
+      <button type="button" class="secondary" id="detailEditBtn">Edit</button>
+      <button type="button" id="detailCloseBtn">Close</button>
     </div>
   </div>
 </div>
@@ -723,6 +840,13 @@
   // Fixed palette rather than a free colour picker, so every profile colour is one that
   // stays legible as the app's accent in both light and dark mode.
   const PROFILE_COLORS = ["#2f6fed","#1e8a4c","#b3541e","#7c3aed","#c0392b","#0e7490","#be185d","#4b5563"];
+  // Uploaded covers are stored inline as data URLs, and localStorage only holds a few MB
+  // for the whole machine's libraries. Uploads are shrunk to fit COVER_UPLOAD_MAX_W x _H
+  // and re-encoded as JPEG, and anything still longer than COVER_DATA_MAX characters
+  // (~150 KB of image) is refused - here on upload, and in normalizeBook for imports.
+  const COVER_DATA_MAX = 200000;
+  const COVER_DATA_RE = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+\/=]+$/;
+  const COVER_UPLOAD_MAX_W = 300, COVER_UPLOAD_MAX_H = 450;
 
   let store = loadStore();
   let data = activeProfile().data;
@@ -756,6 +880,12 @@
       emoji: "📚",
       color: PROFILE_COLORS[0],
       created: todayStr(),
+      // When this profile's library last went out in an Export or Backup All, and how many
+      // books it had then; drives the "back up" reminder. null = never.
+      lastBackupAt: null,
+      lastBackupBookCount: 0,
+      // Yearly book goals, keyed by calendar year: { "2026": 50 }.
+      readingGoals: {},
       data: blankLibrary()
     }, overrides||{});
   }
@@ -797,6 +927,16 @@
       // The colour is written into a CSS property, so only a plain hex colour is accepted.
       if(!/^#[0-9a-f]{6}$/i.test(String(p.color||""))) p.color = PROFILE_COLORS[0];
       p.created = parseYmd(p.created) ? p.created : todayStr();
+      p.lastBackupAt = (p.lastBackupAt && !isNaN(Date.parse(p.lastBackupAt))) ? String(p.lastBackupAt) : null;
+      p.lastBackupBookCount = Math.max(0, parseInt(p.lastBackupBookCount,10) || 0);
+      const goals = {};
+      if(p.readingGoals && typeof p.readingGoals === "object"){
+        Object.keys(p.readingGoals).forEach(year=>{
+          const target = parseInt(p.readingGoals[year],10);
+          if(/^\d{4}$/.test(year) && target >= 1 && target <= 9999) goals[year] = target;
+        });
+      }
+      p.readingGoals = goals;
       p.data = normalizeLibrary(p.data);
     });
     if(!st.profiles.some(p=>p.id===st.activeId)) st.activeId = st.profiles[0].id;
@@ -842,7 +982,13 @@
         .map(q => (q && typeof q === "object") ? { text: str(q.text), page: str(q.page) } : { text: str(q), page: "" })
         .filter(q=>q.text.trim()),
       shelves: strList(raw.shelves), tags: strList(raw.tags),
-      dateAdded: ymdOrNull(raw.dateAdded) || todayStr()
+      dateAdded: ymdOrNull(raw.dateAdded) || todayStr(),
+      // Only a well-formed, size-capped base64 image survives; anything else is dropped
+      // (the book then falls back to its remote cover URL or the placeholder).
+      coverData: (typeof raw.coverData === "string" && raw.coverData.length <= COVER_DATA_MAX
+        && COVER_DATA_RE.test(raw.coverData)) ? raw.coverData : "",
+      // Missing means owned, so libraries saved before this field existed are unchanged.
+      owned: raw.owned !== false
     });
     // The two ordering fields only exist once a list has been dragged.
     if(isFinite(parseFloat(raw.sortIndex))) book.sortIndex = parseFloat(raw.sortIndex);
@@ -874,6 +1020,9 @@
   // the failure is reported instead; the change stays on screen, and Export still works.
   function saveData(){
     activeProfile().data = data;
+    // Any save after a delete means the library has moved on, so that delete's Undo lapses.
+    saveCount++;
+    if(pendingUndo && pendingUndo.saveCount !== saveCount) clearUndo();
     try{
       localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
       return true;
@@ -893,7 +1042,7 @@
       pages:null, status:"tbr", priority:"someday", progress:0, dateStarted:null,
       dateFinished:null, rating:0, notes:"", dnfReason:"", isTopRead:false,
       isRereadCandidate:false, isReread:false, quotes:[], shelves:[], tags:[],
-      dateAdded: todayStr()
+      dateAdded: todayStr(), coverData:"", owned:true
     }, overrides);
   }
 
@@ -902,15 +1051,81 @@
   // An error message (isError) stays up longer and cannot be replaced by an ordinary one
   // while it shows — otherwise "Couldn't save" would be wiped out a moment later by the
   // "Saved" that the same click goes on to report.
-  function toast(msg, isError){
+  // opts.action = { label, run } adds a button to the toast (used for Undo); opts.ms
+  // overrides how long it stays up.
+  function toast(msg, isError, opts){
+    opts = opts || {};
     if(!isError && Date.now() < (toast._errorUntil||0)) return;
     const t = $("toast");
     t.textContent = msg;
+    t.classList.toggle("has-action", !!opts.action);
+    if(opts.action){
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "toast-action";
+      btn.textContent = opts.action.label;
+      btn.addEventListener("click", opts.action.run);
+      t.appendChild(btn);
+    }
     t.classList.add("show");
     clearTimeout(toast._h);
-    const ms = isError ? 6000 : 2200;
+    const ms = opts.ms || (isError ? 6000 : 2200);
     toast._errorUntil = isError ? Date.now() + ms : 0;
-    toast._h = setTimeout(()=>t.classList.remove("show"), ms);
+    toast._h = setTimeout(hideToast, ms);
+  }
+  function hideToast(){
+    $("toast").classList.remove("show", "has-action");
+  }
+
+  // ---------- UNDO (book deletes) ----------
+  // The books removed by the most recent delete are held here, in memory only, with the
+  // positions they had in data.books so an undo puts them back exactly where they were.
+  // The offer lapses after UNDO_MS, or as soon as anything else is saved: saveData bumps
+  // `saveCount`, and an undo recorded against an older count is dropped. That also covers
+  // switching profile or importing, both of which save, so an undo can never put books
+  // into a library other than the one they were deleted from.
+  const UNDO_MS = 8000;
+  let saveCount = 0;
+  let pendingUndo = null;   // { entries:[{book, index}], saveCount, timer }
+
+  // Removes the books matching `ids` from the open library, saves, and offers Undo.
+  // Returns how many were removed.
+  function deleteBooksWithUndo(ids, message){
+    const entries = [];
+    data.books.forEach((b, index)=>{ if(ids.has(b.id)) entries.push({ book:b, index }); });
+    if(!entries.length) return 0;
+    data.books = data.books.filter(b=>!ids.has(b.id));
+    entries.forEach(en=>selectedIds.delete(en.book.id));
+    saveData();
+    clearUndo();
+    pendingUndo = { entries, saveCount, timer: setTimeout(clearUndo, UNDO_MS) };
+    const text = typeof message === "function" ? message(entries.length) : message;
+    toast(text, false, { ms: UNDO_MS, action: { label: "Undo", run: undoDelete } });
+    return entries.length;
+  }
+  function clearUndo(){
+    if(!pendingUndo) return;
+    clearTimeout(pendingUndo.timer);
+    pendingUndo = null;
+    const btn = document.querySelector("#toast .toast-action");
+    if(btn){ btn.remove(); hideToast(); }
+  }
+  function undoDelete(){
+    if(!pendingUndo || pendingUndo.saveCount !== saveCount){
+      clearUndo();
+      toast("Nothing to undo");
+      return;
+    }
+    const entries = pendingUndo.entries;
+    clearUndo();
+    // Re-insert in ascending original position, so each earlier insert has already
+    // restored the indexes the later ones refer to.
+    entries.slice().sort((a,b)=>a.index-b.index).forEach(en=>{
+      data.books.splice(Math.min(en.index, data.books.length), 0, en.book);
+    });
+    saveData();
+    renderAll();
+    toast(`Restored ${entries.length} book${entries.length===1?"":"s"}`);
   }
 
   // IMPORTANT: escapes text before it is inserted into the page as HTML.
@@ -967,15 +1182,74 @@
   });
   $("deleteSelectedBtn").addEventListener("click", ()=>{
     if(!selectedIds.size){ toast("Nothing selected"); return; }
-    if(!confirm(`Delete ${selectedIds.size} selected book(s)? This can't be undone.`)) return;
-    data.books = data.books.filter(b=>!selectedIds.has(b.id));
-    const count = selectedIds.size;
+    if(!confirm(`Delete ${selectedIds.size} selected book(s)? You can undo this for a few seconds afterwards.`)) return;
+    const count = deleteBooksWithUndo(new Set(selectedIds), n=>`Deleted ${n} book${n===1?"":"s"}`);
     selectedIds.clear();
-    saveData();
     updateSelectionBar();
     renderAll();
-    toast(`Deleted ${count} book(s)`);
+    if(!count) toast("Nothing to delete");
   });
+  // ---------- BULK EDIT ----------
+  // Both bulk edits rebuild each selected book through normalizeBook, the same validation
+  // every loaded or imported record passes, so the selection bar can't write a value the
+  // Edit dialog couldn't.
+  function bulkUpdate(change){
+    let changed = 0;
+    data.books = data.books.map(b=>{
+      if(!selectedIds.has(b.id)) return b;
+      const next = change(Object.assign({}, b, {
+        tags: (b.tags||[]).slice(), shelves: (b.shelves||[]).slice()
+      }));
+      if(!next) return b;   // the change did not apply to this book
+      changed++;
+      return normalizeBook(next);
+    });
+    if(changed){ saveData(); renderAll(); }
+    return changed;
+  }
+
+  $("bulkAddLabelsBtn").addEventListener("click", ()=>{
+    if(!selectedIds.size){ toast("Nothing selected"); return; }
+    const labels = splitList($("bulkLabelInput").value);
+    if(!labels.length){ toast("Type one or more tags or shelves first"); return; }
+    const field = $("bulkLabelKind").value === "shelves" ? "shelves" : "tags";
+    // Case-insensitive, like tag suggestions from lookups: "Fantasy" isn't added to a book
+    // that already has "fantasy".
+    const changed = bulkUpdate(b=>{
+      const have = new Set(b[field].map(x=>x.toLowerCase()));
+      const add = labels.filter(l=>!have.has(l.toLowerCase()));
+      if(!add.length) return null;
+      b[field] = b[field].concat(add);
+      return b;
+    });
+    $("bulkLabelInput").value = "";
+    toast(changed
+      ? `Added ${labels.join(", ")} to ${changed} book${changed===1?"":"s"}`
+      : `The selected books already have ${labels.join(", ")}`);
+  });
+
+  // Moving a book to a status does what that status's card button does: starting a book
+  // stamps a start date if it has none, finishing sets progress to 100 and a finish date,
+  // and DNF sets a finish date. Books already in that status are left alone.
+  const STATUS_LABELS = { tbr:"To Be Read", reading:"Currently Reading", read:"Read", dnf:"Did Not Finish" };
+  $("bulkStatusBtn").addEventListener("click", ()=>{
+    if(!selectedIds.size){ toast("Nothing selected"); return; }
+    const status = $("bulkStatusSelect").value;
+    if(!STATUS_LABELS[status]){ toast("Choose a status to move them to"); return; }
+    const changed = bulkUpdate(b=>{
+      if(b.status === status) return null;
+      b.status = status;
+      if(status === "reading") b.dateStarted = b.dateStarted || todayStr();
+      if(status === "read"){ b.progress = 100; b.dateFinished = todayStr(); }
+      if(status === "dnf") b.dateFinished = todayStr();
+      return b;
+    });
+    $("bulkStatusSelect").value = "";
+    toast(changed
+      ? `Moved ${changed} book${changed===1?"":"s"} to ${STATUS_LABELS[status]}`
+      : `The selected books are already in ${STATUS_LABELS[status]}`);
+  });
+
   $("checkCoversBtn").addEventListener("click", async ()=>{
     if(!selectedIds.size){ toast("Nothing selected"); return; }
     const targets = data.books.filter(b=>selectedIds.has(b.id));
@@ -985,6 +1259,7 @@
     for(let i=0; i<targets.length; i++){
       const book = targets[i];
       btn.textContent = `Checking ${i+1}/${targets.length}...`;
+      if(book.coverData) continue;   // the user's own upload is never second-guessed
       // Only a definite verdict is acted on. If the existing cover merely timed out, the
       // book is left exactly as it is - replacing a cover on the strength of a slow
       // connection is precisely how correct covers got overwritten with wrong ones.
@@ -1018,7 +1293,8 @@
     if(!selectedIds.size){ toast("Nothing selected"); return; }
     const targets = data.books.filter(b=>selectedIds.has(b.id) && b.cover);
     if(!targets.length){ toast("No covers to clear"); return; }
-    if(!confirm(`Clear the cover on ${targets.length} selected book(s)? They will show a placeholder until you run Check for Covers again.`)) return;
+    // Only remote cover URLs are cleared; a cover the user uploaded is theirs to remove in Edit.
+    if(!confirm(`Clear the cover URL on ${targets.length} selected book(s)? Books without an uploaded cover will show a placeholder until you run Check for Covers again.`)) return;
     targets.forEach(b=>{ b.cover = ""; });
     saveData();
     renderAll();
@@ -1055,12 +1331,15 @@
     $("fieldTitle").value = b.title||"";
     $("fieldAuthor").value = b.author||"";
     $("fieldCover").value = b.cover||"";
+    setEditCoverData(b.coverData||"");
+    $("coverUploadStatus").textContent = "";
     $("fieldSeriesName").value = (b.series&&b.series.name)||"";
     $("fieldSeriesNum").value = (b.series && b.series.num!=null) ? b.series.num : "";
     $("fieldFormat").value = b.format||"physical";
     $("fieldPages").value = b.pages!=null ? b.pages : "";
     $("fieldStatus").value = book ? book.status : "tbr";
     $("fieldPriority").value = book ? (book.priority||"someday") : "next";
+    $("fieldOwned").value = (book && book.owned === false) ? "wishlist" : "owned";
     $("fieldProgress").value = b.progress||0;
     $("progressVal").textContent = (b.progress||0) + "%";
     $("fieldDateStarted").value = b.dateStarted||"";
@@ -1092,6 +1371,7 @@
   function updateStatusDependentFields(){
     const status = $("fieldStatus").value;
     $("priorityRow").style.display = status==="tbr" ? "" : "none";
+    // Ownership applies whatever the status (a book can be read yet not owned), so its row is always shown.
     $("progressRow").style.display = status==="reading" ? "" : "none";
     $("datesRow").style.display = (status==="read"||status==="dnf") ? "" : "none";
     $("ratingRow").style.display = status==="read" ? "" : "none";
@@ -1101,6 +1381,67 @@
     $("quotesRow").style.display = status==="read" ? "" : "none";
   }
   $("fieldStatus").addEventListener("change", updateStatusDependentFields);
+
+  // ---------- UPLOADED COVER ----------
+  // The upload lives in editCoverData while the dialog is open (a file input can't hold a
+  // data URL), and is written to the book only on Save.
+  let editCoverData = "";
+  function setEditCoverData(dataUrl){
+    editCoverData = dataUrl || "";
+    const preview = $("coverUploadPreview");
+    preview.style.display = editCoverData ? "" : "none";
+    if(editCoverData) preview.src = editCoverData; else preview.removeAttribute("src");
+    $("coverUploadRemoveBtn").style.display = editCoverData ? "" : "none";
+    $("coverUploadBtn").textContent = editCoverData ? "Replace upload…" : "Upload cover…";
+  }
+  // Decodes an image file, scales it down to fit the cover box, and re-encodes it as JPEG,
+  // stepping the quality down until it fits COVER_DATA_MAX. A white background goes under
+  // the drawing so transparent PNGs don't turn black in JPEG.
+  function imageFileToCoverData(file){
+    return new Promise((resolve, reject)=>{
+      if(!file || !/^image\//.test(file.type)) return reject(new Error("That file isn't an image."));
+      if(file.size > 25*1024*1024) return reject(new Error("That image is over 25 MB. Try a smaller one."));
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = ()=>{
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, COVER_UPLOAD_MAX_W/img.naturalWidth, COVER_UPLOAD_MAX_H/img.naturalHeight);
+        const w = Math.max(1, Math.round(img.naturalWidth*scale)), h = Math.max(1, Math.round(img.naturalHeight*scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        for(const quality of [0.85, 0.7, 0.55, 0.4]){
+          const dataUrl = canvas.toDataURL("image/jpeg", quality);
+          if(dataUrl.length <= COVER_DATA_MAX) return resolve(dataUrl);
+        }
+        reject(new Error("That image is still too large after shrinking. Try a simpler one."));
+      };
+      img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error("That image couldn't be read.")); };
+      img.src = url;
+    });
+  }
+  $("coverUploadBtn").addEventListener("click", ()=>$("coverUploadFile").click());
+  $("coverUploadFile").addEventListener("change", async (e)=>{
+    const file = e.target.files[0];
+    e.target.value = "";
+    if(!file) return;
+    const statusEl = $("coverUploadStatus");
+    statusEl.textContent = "Processing image...";
+    try{
+      const dataUrl = await imageFileToCoverData(file);
+      setEditCoverData(dataUrl);
+      statusEl.textContent = `Cover ready (${Math.round(dataUrl.length*0.75/1024)} KB). Save to keep it.`;
+    }catch(err){
+      statusEl.textContent = err.message;
+    }
+  });
+  $("coverUploadRemoveBtn").addEventListener("click", ()=>{
+    setEditCoverData("");
+    $("coverUploadStatus").textContent = "Upload removed. Save to keep the change.";
+  });
   $("fieldProgress").addEventListener("input", (e)=>{
     $("progressVal").textContent = e.target.value + "%";
   });
@@ -1121,7 +1462,11 @@
     const tags = splitList($("fieldTags").value);
 
     const existing = editingId ? data.books.find(b=>b.id===editingId) : null;
-    const book = makeBook({
+    // The form's values are laid over the existing record rather than a blank one, so the
+    // fields the form doesn't show (dateAdded, and the TBR / Top 5 order in sortIndex and
+    // topReadRank) survive an edit. The result goes through normalizeBook like every other
+    // path that writes a book.
+    const book = normalizeBook(Object.assign({}, existing || {}, {
       id: editingId || uid(),
       isbn: $("isbnInput").value.trim(),
       title: title,
@@ -1143,9 +1488,10 @@
       isReread: $("fieldIsReread").checked,
       quotes: quotes,
       shelves: shelves,
-      tags: tags
-    });
-    if(existing) book.dateAdded = existing.dateAdded;
+      tags: tags,
+      coverData: editCoverData,
+      owned: $("fieldOwned").value !== "wishlist"
+    }));
 
     if(editingId){
       const idx = data.books.findIndex(b=>b.id===editingId);
@@ -1162,12 +1508,10 @@
   $("deleteBookBtn").addEventListener("click", ()=>{
     if(!editingId) return;
     if(!confirm("Delete this book?")) return;
-    data.books = data.books.filter(b=>b.id!==editingId);
-    selectedIds.delete(editingId);
-    saveData();
+    const title = (data.books.find(b=>b.id===editingId)||{}).title || "book";
+    deleteBooksWithUndo(new Set([editingId]), `Deleted “${title}”`);
     closeModal();
     renderAll();
-    toast("Deleted");
   });
 
   // =====================================================================================
@@ -1572,11 +1916,46 @@
     return String(str||"profile").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"") || "profile";
   }
 
+  // ---------- BACKUP REMINDER ----------
+  // localStorage is the only copy of a library, so the header nudges once a profile's last
+  // backup is BACKUP_STALE_DAYS old, or BACKUP_STALE_GROWTH books behind. A profile that has
+  // never been backed up is measured from the day it was created, so a brand-new library
+  // isn't nagged about on its first book.
+  const BACKUP_STALE_DAYS = 14, BACKUP_STALE_GROWTH = 20;
+  function markBackedUp(profiles){
+    const at = new Date().toISOString();
+    profiles.forEach(p=>{ p.lastBackupAt = at; p.lastBackupBookCount = p.data.books.length; });
+  }
+  function backupReminder(p){
+    const count = p.data.books.length;
+    if(!count) return "";
+    const since = p.lastBackupAt ? new Date(p.lastBackupAt) : (parseYmd(p.created) || new Date());
+    const days = Math.floor((Date.now() - since.getTime()) / 86400000);
+    const added = count - (p.lastBackupAt ? p.lastBackupBookCount : 0);
+    if(days < BACKUP_STALE_DAYS && added < BACKUP_STALE_GROWTH) return "";
+    if(!p.lastBackupAt) return "⚠ Never backed up";
+    if(days >= BACKUP_STALE_DAYS) return `⚠ Last backup ${days} days ago`;
+    return `⚠ ${added} books added since last backup`;
+  }
+  function renderBackupNudge(){
+    const p = activeProfile();
+    const msg = backupReminder(p);
+    $("backupNudge").style.display = msg ? "" : "none";
+    $("backupNudgeText").textContent = msg;
+    $("backupNudge").title = p.lastBackupAt
+      ? "Last backed up " + new Date(p.lastBackupAt).toLocaleString() : "This profile has never been exported or backed up";
+  }
+  $("backupNudgeBtn").addEventListener("click", ()=>$("backupAllBtn").click());
+
   $("exportBtn").addEventListener("click", ()=>{
+    markBackedUp([activeProfile()]);
     saveData();
     downloadJSON(data, "book-tracker-" + slug(activeProfile().name) + ".json");
+    renderBackupNudge();
   });
   $("backupAllBtn").addEventListener("click", ()=>{
+    // Marked before the file is built, so a later restore of this file also knows when it was made.
+    markBackedUp(store.profiles);
     saveData();
     downloadJSON({
       kind: "bookTrackerBackup", version: 1,
@@ -1585,6 +1964,7 @@
       profiles: store.profiles
     }, "book-tracker-all-profiles-" + todayStr() + ".json");
     toast("Backed up " + store.profiles.length + " profile" + (store.profiles.length===1?"":"s"));
+    renderBackupNudge();
   });
 
   $("importBtn").addEventListener("click", ()=>$("importFile").click());
@@ -2062,9 +2442,11 @@
   // The onload/onerror attributes call the two functions above: onerror catches a URL
   // that fails outright, and onload catches Open Library's habit of answering "no cover"
   // with a successful but blank 1x1 image, which would otherwise show as an empty box.
+  // An uploaded cover (coverData) always wins over the remote URL.
   function coverImg(book, cls){
-    if(book.cover){
-      return `<img src="${esc(book.cover)}" class="${cls}" alt="" data-title="${esc(book.title.slice(0,20))}" onload="checkCoverLoaded(this)" onerror="coverToPlaceholder(this)">`;
+    const src = book.coverData || book.cover;
+    if(src){
+      return `<img src="${esc(src)}" class="${cls}" alt="" data-title="${esc(book.title.slice(0,20))}" onload="checkCoverLoaded(this)" onerror="coverToPlaceholder(this)">`;
     }
     return `<div class="${cls} placeholder">${esc(book.title.slice(0,20))}</div>`;
   }
@@ -2085,6 +2467,13 @@
       + values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join("");
     sel.value = values.includes(current) ? current : "";
     return sel.value;
+  }
+  // The one search rule every tab's search box uses: the query is matched, ignoring case,
+  // anywhere in the title or the author.
+  function matchesSearch(book, query){
+    const q = String(query||"").trim().toLowerCase();
+    if(!q) return true;
+    return (book.title||"").toLowerCase().includes(q) || (book.author||"").toLowerCase().includes(q);
   }
   function seriesGroups(){
     const map = {};
@@ -2123,6 +2512,9 @@
     if(opts.nextUp) badges += `<span class="badge next-up">Next Up</span>`;
     if(book.isTopRead) badges += `<span class="badge top">★ Top Read</span>`;
     if(book.isReread) badges += `<span class="badge">Reread</span>`;
+    // Wishlist badge: always on a TBR book, and on a finished book only where the Read tab
+    // asks for it (opts.wishlistBadge) — elsewhere a read book's ownership isn't flagged.
+    if(book.owned === false && (book.status==="tbr" || opts.wishlistBadge)) badges += `<span class="badge wishlist">Wishlist</span>`;
     (book.shelves||[]).forEach(s=>badges+=`<span class="badge">${esc(s)}</span>`);
     (book.tags||[]).forEach(t=>badges+=`<span class="badge">${esc(t)}</span>`);
 
@@ -2138,7 +2530,8 @@
       extra += `<div class="muted">Dropped: ${esc(book.dnfReason)}</div>`;
     }
 
-    let actions = `<button class="small secondary" data-action="edit" data-id="${esc(book.id)}">Edit</button>`;
+    let actions = opts.moveList ? moveButtonsHTML(opts.moveList, book.id, opts.isFirst, opts.isLast) : "";
+    actions += `<button class="small secondary" data-action="edit" data-id="${esc(book.id)}">Edit</button>`;
     if(book.status==="tbr"){
       actions += `<button class="small" data-action="start-reading" data-id="${esc(book.id)}">Start Reading</button>`;
       actions += book.priority==="someday"
@@ -2162,9 +2555,9 @@
 
     return `<div class="book-card${isSelected?' selected':''}" draggable="${opts.draggable?'true':'false'}" data-id="${esc(book.id)}">
       ${checkbox}
-      ${coverImg(book,"cover")}
+      <span class="detail-link" data-detail-id="${esc(book.id)}" title="View details">${coverImg(book,"cover")}</span>
       <div class="book-info">
-        <div class="book-title">${esc(book.title)}</div>
+        <button type="button" class="book-title title-link" data-detail-id="${esc(book.id)}">${esc(book.title)}</button>
         <div class="book-author">${esc(book.author||"Unknown author")}</div>
         <div class="badge-row">${badges}</div>
         ${extra}
@@ -2175,9 +2568,18 @@
 
   // Shared by several tabs: draw a grid of cards, and show the "nothing here" message
   // only when the list is empty.
-  function renderCardList(containerId, emptyId, books){
+  function renderCardList(containerId, emptyId, books, search){
     $(containerId).innerHTML = books.map(b=>bookCardHTML(b)).join("");
-    $(emptyId).style.display = books.length ? "none" : "";
+    showEmpty(emptyId, !books.length, search);
+  }
+  // Shows or hides a tab's "nothing here" message. While a search is typed in, the
+  // message says so instead, since the list is empty only because nothing matched.
+  function showEmpty(emptyId, isEmpty, search){
+    const el = $(emptyId);
+    if(el.dataset.defaultText == null) el.dataset.defaultText = el.textContent;
+    const filtering = typeof search === "string" ? !!search.trim() : !!search;
+    el.textContent = filtering ? "No books match the current search or filters." : el.dataset.defaultText;
+    el.style.display = isEmpty ? "" : "none";
   }
 
   // EVENT DELEGATION. Rather than attaching a listener to every card button (which would
@@ -2187,6 +2589,12 @@
   // rebuilt, and costs one listener instead of hundreds.
   // Event delegation for card actions across all views
   document.body.addEventListener("click", (e)=>{
+    const detail = e.target.closest("[data-detail-id]");
+    if(detail){
+      const book = data.books.find(b=>b.id===detail.dataset.detailId);
+      if(book) openDetail(book);
+      return;
+    }
     const actBtn = e.target.closest("[data-action]");
     if(actBtn){
       const id = actBtn.dataset.id;
@@ -2203,6 +2611,11 @@
         saveData(); renderAll();
         toast("New reread started — track it in Currently Reading");
       }
+      return;
+    }
+    const moveBtn = e.target.closest("[data-move]");
+    if(moveBtn){
+      moveInList(moveBtn.dataset.moveList, moveBtn.dataset.id, moveBtn.dataset.move);
       return;
     }
     const tierBtn = e.target.closest("[data-tier-move]");
@@ -2232,6 +2645,69 @@
       toast("Added to your TBR");
       return;
     }
+  });
+
+  // ---------- BOOK DETAIL (read-only) ----------
+  // Everything about one book in a readable layout: full notes and quotes rather than the
+  // card's 120-character excerpt. Rows with no value are left out. Nothing here edits;
+  // the Edit button closes this and opens the normal Add/Edit dialog.
+  let detailBookId = null;
+  function formatYmd(s){
+    const d = parseYmd(s);
+    return d ? d.toLocaleDateString(undefined, { year:"numeric", month:"short", day:"numeric" }) : "";
+  }
+  function openDetail(book){
+    detailBookId = book.id;
+    const rows = [];
+    const row = (label, value) => { if(value !== "" && value != null) rows.push(`<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`); };
+    row("Status", STATUS_LABELS[book.status]);
+    if(book.status === "tbr") row("Priority", book.priority === "someday" ? "Someday" : "Up Next");
+    row("Ownership", book.owned === false ? "Wishlist" : "Owned");
+    if(book.status === "reading") row("Progress", (book.progress||0) + "%");
+    if(book.status === "read") row("Rating", book.rating ? starStr(book.rating) : "Unrated");
+    row("Series", book.series ? book.series.name + (book.series.num!=null ? " #" + book.series.num : "") : "");
+    row("Format", book.format ? book.format.charAt(0).toUpperCase() + book.format.slice(1) : "");
+    row("Pages", book.pages ? book.pages.toLocaleString() : "");
+    row("ISBN", book.isbn);
+    row("Started", formatYmd(book.dateStarted));
+    row("Finished", formatYmd(book.dateFinished));
+    row("Added", formatYmd(book.dateAdded));
+    row("Flags", [book.isTopRead && "Top 5 read", book.isRereadCandidate && "Reread candidate", book.isReread && "Reread"].filter(Boolean).join(", "));
+    row("Shelves", (book.shelves||[]).join(", "));
+    row("Tags", (book.tags||[]).join(", "));
+    row("Cover", book.coverData ? "Uploaded image" : (book.cover ? "From URL" : ""));
+
+    const sections = [];
+    if(book.dnfReason) sections.push(`<div class="detail-section"><h3>Reason for dropping</h3><div class="detail-notes">${esc(book.dnfReason)}</div></div>`);
+    if(book.notes) sections.push(`<div class="detail-section"><h3>Notes</h3><div class="detail-notes">${esc(book.notes)}</div></div>`);
+    if(book.quotes && book.quotes.length){
+      sections.push(`<div class="detail-section"><h3>Quotes (${book.quotes.length})</h3>${book.quotes.map(q=>
+        `<div class="quote-item"><span class="detail-notes">"${esc(q.text)}"</span>${q.page ? `<div class="qmeta">p. ${esc(q.page)}</div>` : ""}</div>`).join("")}</div>`);
+    }
+
+    $("detailBody").innerHTML = `
+      <div class="detail-head">
+        ${coverImg(book, "cover")}
+        <div style="min-width:0;">
+          <h2 id="detailTitle">${esc(book.title)}</h2>
+          <div class="book-author">${esc(book.author || "Unknown author")}</div>
+        </div>
+      </div>
+      <dl class="detail-grid">${rows.join("")}</dl>
+      ${sections.join("")}`;
+    $("detailOverlay").classList.add("active");
+    $("detailCloseBtn").focus();
+  }
+  function closeDetail(){
+    $("detailOverlay").classList.remove("active");
+    detailBookId = null;
+  }
+  $("detailCloseBtn").addEventListener("click", closeDetail);
+  $("detailOverlay").addEventListener("click", (e)=>{ if(e.target === $("detailOverlay")) closeDetail(); });
+  $("detailEditBtn").addEventListener("click", ()=>{
+    const book = data.books.find(b=>b.id===detailBookId);
+    closeDetail();
+    if(book) openModal(book);
   });
 
   // ---------- DRAG & DROP ----------
@@ -2279,32 +2755,73 @@
       saveData();
     });
   }
+  // Persists a new on-screen order for one TBR tier. Shared by drag-and-drop and the
+  // up/down buttons, so both write sortIndex identically. `movedId` is the book that moved,
+  // which joins this tier if it came from the other one.
+  // The cards on screen may be only part of the tier when a search or filter is on.
+  // Numbering just those 0..n would collide with the hidden books' indexes, so instead
+  // the visible books are poured, in their new order, back into the slots the visible
+  // books occupied in the full tier; hidden books keep their places untouched.
+  function applyTierOrder(tier, ids, movedId){
+    const moved = data.books.find(b=>b.id===movedId);
+    if(moved) moved.priority = tier;
+    const visible = new Set(ids);
+    const tierBooks = data.books
+      .filter(b=>b.status==="tbr" && (tier==="someday" ? b.priority==="someday" : b.priority!=="someday"))
+      .sort((a,b)=>(a.sortIndex||0)-(b.sortIndex||0));
+    const reordered = ids.map(id=>data.books.find(b=>b.id===id)).filter(Boolean);
+    tierBooks.map(b=> visible.has(b.id) ? reordered.shift() : b)
+      .forEach((b, idx)=>{ if(b) b.sortIndex = idx; });
+  }
+  // Persists a new Top 5 order (shared by drag-and-drop and the up/down buttons).
+  function applyTopReadOrder(ids){
+    ids.forEach((id, idx)=>{
+      const b = data.books.find(x=>x.id===id);
+      if(b) b.topReadRank = idx;
+    });
+  }
   function attachDnD(container, tier){
     attachSortable(container, ".book-card", (ids)=>{
-      const moved = data.books.find(b=>b.id===dragSrcId);
-      if(moved) moved.priority = tier;
-      // The cards on screen may be only part of the tier when a search or filter is on.
-      // Numbering just those 0..n would collide with the hidden books' indexes, so instead
-      // the visible books are poured, in their new order, back into the slots the visible
-      // books occupied in the full tier; hidden books keep their places untouched.
-      const visible = new Set(ids);
-      const tierBooks = data.books
-        .filter(b=>b.status==="tbr" && (tier==="someday" ? b.priority==="someday" : b.priority!=="someday"))
-        .sort((a,b)=>(a.sortIndex||0)-(b.sortIndex||0));
-      const reordered = ids.map(id=>data.books.find(b=>b.id===id)).filter(Boolean);
-      tierBooks.map(b=> visible.has(b.id) ? reordered.shift() : b)
-        .forEach((b, idx)=>{ if(b) b.sortIndex = idx; });
+      applyTierOrder(tier, ids, dragSrcId);
       renderTBR();
     }, renderTBR);
   }
   function attachTopReadsDnD(container){
     attachSortable(container, "li[data-id]", (ids)=>{
-      ids.forEach((id, idx)=>{
-        const b = data.books.find(x=>x.id===id);
-        if(b) b.topReadRank = idx;
-      });
+      applyTopReadOrder(ids);
       renderRankings();
     }, renderRankings);
+  }
+
+  // ---------- UP/DOWN REORDERING ----------
+  // The non-drag way to reorder (touch screens, keyboards). A button carries the list it
+  // belongs to (data-move-list) and a direction; the list's current on-screen order is
+  // read from the DOM exactly as a drop would read it, the book swaps places with its
+  // neighbour, and the result goes through the same apply* function the drag uses.
+  const MOVE_LISTS = {
+    next:    { container: ()=>$("tbrUpNext"),    selector: ".book-card", apply: ids=>applyTierOrder("next", ids),    render: ()=>renderTBR() },
+    someday: { container: ()=>$("tbrSomeday"),   selector: ".book-card", apply: ids=>applyTierOrder("someday", ids), render: ()=>renderTBR() },
+    top:     { container: ()=>$("topReadsList"), selector: "li[data-id]", apply: ids=>applyTopReadOrder(ids),        render: ()=>renderRankings() }
+  };
+  function moveButtonsHTML(list, id, isFirst, isLast){
+    return `<span class="move-btns">
+      <button class="small secondary" data-move="up" data-move-list="${list}" data-id="${esc(id)}" ${isFirst?"disabled":""} title="Move up" aria-label="Move up">↑</button>
+      <button class="small secondary" data-move="down" data-move-list="${list}" data-id="${esc(id)}" ${isLast?"disabled":""} title="Move down" aria-label="Move down">↓</button>
+    </span>`;
+  }
+  function moveInList(listKey, id, dir){
+    const list = MOVE_LISTS[listKey];
+    if(!list) return;
+    const ids = [...list.container().querySelectorAll(list.selector)].map(el=>el.dataset.id);
+    const i = ids.indexOf(id), j = dir === "up" ? i-1 : i+1;
+    if(i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    list.apply(ids);
+    saveData();
+    list.render();
+    // Keep focus on the same button after the redraw, so repeated presses keep moving the book.
+    const again = list.container().querySelector(`[data-move="${dir}"][data-id="${CSS.escape(id)}"]`);
+    if(again && !again.disabled) again.focus();
   }
   function getDragAfterElement(container, y, selector){
     const rows = [...container.querySelectorAll(`${selector||".book-card"}:not(.dragging)`)];
@@ -2320,17 +2837,19 @@
   // filter `data.books` down to the relevant books, sort them, build HTML, insert it.
   // ---------- RENDER: TBR ----------
   function renderTBR(){
-    const search = ($("tbrSearch").value||"").toLowerCase();
+    const search = $("tbrSearch").value;
     // The filter options are rebuilt on every render, so shelves and tags added since the
     // page loaded — or those of a profile just switched to — are always listed. A choice
     // that no longer exists (e.g. it belonged to the previous profile) falls back to "All".
     const shelfFilter = fillFilterSelect($("tbrShelfFilter"), "All shelves", allValues("shelves"));
     const tagFilter = fillFilterSelect($("tbrGenreFilter"), "All genres/moods", allValues("tags"));
+    const ownedFilter = $("tbrOwnedFilter").value;
 
     let tbrBooks = data.books.filter(b=>b.status==="tbr");
-    if(search) tbrBooks = tbrBooks.filter(b=>(b.title||"").toLowerCase().includes(search) || (b.author||"").toLowerCase().includes(search));
+    tbrBooks = tbrBooks.filter(b=>matchesSearch(b, search));
     if(shelfFilter) tbrBooks = tbrBooks.filter(b=>(b.shelves||[]).includes(shelfFilter));
     if(tagFilter) tbrBooks = tbrBooks.filter(b=>(b.tags||[]).includes(tagFilter));
+    if(ownedFilter) tbrBooks = tbrBooks.filter(b=> ownedFilter === "wishlist" ? b.owned === false : b.owned !== false);
     tbrBooks.sort((a,b)=>(a.sortIndex||0)-(b.sortIndex||0));
 
     const nextUpBooks = nextUpSuggestions();
@@ -2346,10 +2865,14 @@
     const upNext = tbrBooks.filter(b=>b.priority!=="someday");
     const someday = tbrBooks.filter(b=>b.priority==="someday");
 
-    $("tbrUpNext").innerHTML = upNext.map(b=>bookCardHTML(b,{draggable:true, nextUp:nextUpIds.has(b.id)})).join("");
-    $("tbrUpNextEmpty").style.display = upNext.length ? "none" : "";
-    $("tbrSomeday").innerHTML = someday.map(b=>bookCardHTML(b,{draggable:true, nextUp:nextUpIds.has(b.id)})).join("");
-    $("tbrSomedayEmpty").style.display = someday.length ? "none" : "";
+    const tierCard = (list, books) => (b, i) => bookCardHTML(b, {
+      draggable:true, nextUp:nextUpIds.has(b.id), moveList:list, isFirst: i===0, isLast: i===books.length-1
+    });
+    $("tbrUpNext").innerHTML = upNext.map(tierCard("next", upNext)).join("");
+    const filtering = search || shelfFilter || tagFilter || ownedFilter;
+    showEmpty("tbrUpNextEmpty", !upNext.length, filtering);
+    $("tbrSomeday").innerHTML = someday.map(tierCard("someday", someday)).join("");
+    showEmpty("tbrSomedayEmpty", !someday.length, filtering);
 
     attachDnD($("tbrUpNext"), "next");
     attachDnD($("tbrSomeday"), "someday");
@@ -2357,25 +2880,28 @@
   $("tbrSearch").addEventListener("input", renderTBR);
   $("tbrShelfFilter").addEventListener("change", renderTBR);
   $("tbrGenreFilter").addEventListener("change", renderTBR);
+  $("tbrOwnedFilter").addEventListener("change", renderTBR);
 
   // The result is drawn right here on the TBR tab; the Discovery panel is not visible from it.
   $("pickForMeFromTbrBtn").addEventListener("click", ()=>pickForMe("tbrPickResult"));
 
   // ---------- RENDER: READING ----------
   function renderReading(){
-    renderCardList("readingCards", "readingEmpty", data.books.filter(b=>b.status==="reading"));
+    const search = $("readingSearch").value;
+    renderCardList("readingCards", "readingEmpty", data.books.filter(b=>b.status==="reading" && matchesSearch(b, search)), search);
   }
+  $("readingSearch").addEventListener("input", renderReading);
 
   // ---------- RENDER: READ ----------
   // The Read tab supports search, a sort dropdown and a "rereads only" filter. The sort
   // dropdown's value is something like "rating-desc", split here into field and direction.
   function renderRead(){
-    const search = ($("readSearch").value||"").toLowerCase();
+    const search = $("readSearch").value;
     const sortBy = $("readSortBy").value;
     const rereadsOnly = $("showRereadsOnly").checked;
     let books = data.books.filter(b=>b.status==="read");
     if(rereadsOnly) books = books.filter(b=>b.isReread);
-    if(search) books = books.filter(b=>(b.title||"").toLowerCase().includes(search) || (b.author||"").toLowerCase().includes(search));
+    books = books.filter(b=>matchesSearch(b, search));
     const [key,dir] = sortBy.split("-");
     books.sort((a,b)=>{
       let av,bv;
@@ -2386,8 +2912,8 @@
       if(av>bv) return dir==="asc"?1:-1;
       return 0;
     });
-    $("readCards").innerHTML = books.map(b=>bookCardHTML(b)).join("");
-    $("readEmpty").style.display = books.length ? "none" : "";
+    $("readCards").innerHTML = books.map(b=>bookCardHTML(b, {wishlistBadge:true})).join("");
+    showEmpty("readEmpty", !books.length, search || rereadsOnly);
   }
   $("readSearch").addEventListener("input", renderRead);
   $("readSortBy").addEventListener("change", renderRead);
@@ -2395,23 +2921,36 @@
 
   // ---------- RENDER: DNF ----------
   function renderDnf(){
-    renderCardList("dnfCards", "dnfEmpty", data.books.filter(b=>b.status==="dnf"));
+    const search = $("dnfSearch").value;
+    renderCardList("dnfCards", "dnfEmpty", data.books.filter(b=>b.status==="dnf" && matchesSearch(b, search)), search);
   }
+  $("dnfSearch").addEventListener("input", renderDnf);
 
   // ---------- RENDER: SERIES ----------
+  // Series order. Name is the default, and the tiebreaker inside the other two orders.
+  //   complete - highest share of the series read first (ties: more books read first)
+  //   nextup   - series with a Next Up book waiting on the TBR first
+  const SERIES_SORTERS = {
+    name: (a,b)=>a.name.localeCompare(b.name),
+    complete: (a,b)=>(b.ratio - a.ratio) || (b.readCount - a.readCount) || a.name.localeCompare(b.name),
+    nextup: (a,b)=>((b.nextSuggestion?1:0) - (a.nextSuggestion?1:0)) || a.name.localeCompare(b.name)
+  };
   function renderSeries(){
     const groups = seriesGroups();
-    const names = Object.keys(groups).sort();
     const suggestions = nextUpSuggestions(); // once, not once per series
-
-    const container = $("seriesList");
-    $("seriesEmpty").style.display = names.length ? "none" : "";
-    container.innerHTML = names.map(name=>{
+    const sorter = SERIES_SORTERS[$("seriesSort").value] || SERIES_SORTERS.name;
+    const series = Object.keys(groups).map(name=>{
       const books = groups[name].slice().sort((a,b)=>(a.series.num||0)-(b.series.num||0));
       const readCount = books.filter(b=>b.status==="read").length;
-      const total = books.length;
+      return { name, books, readCount, total: books.length,
+        ratio: books.length ? readCount/books.length : 0,
+        nextSuggestion: suggestions.find(b=>b.series.name===name) };
+    }).sort(sorter);
+
+    const container = $("seriesList");
+    $("seriesEmpty").style.display = series.length ? "none" : "";
+    container.innerHTML = series.map(({name, books, readCount, total, nextSuggestion})=>{
       const pct = total ? Math.round(readCount/total*100) : 0;
-      const nextSuggestion = suggestions.find(b=>b.series.name===name);
       return `<div class="series-card">
         <div class="series-head">
           <h3 style="margin:0;">${esc(name)}</h3>
@@ -2423,6 +2962,7 @@
       </div>`;
     }).join("");
   }
+  $("seriesSort").addEventListener("change", renderSeries);
 
   // Rankings are all derived from the books on the fly — nothing here is stored except
   // the manual Top 5 order. Author and series statistics are accumulated into a lookup
@@ -2438,7 +2978,7 @@
       if(br!=null) return 1;
       return (b.rating||0)-(a.rating||0);
     }).slice(0,5);
-    $("topReadsList").innerHTML = topReads.map((b,i)=>`<li draggable="true" data-id="${esc(b.id)}"><span><span class="rank-num">${i+1}</span>${esc(b.title)} — <span class="muted">${esc(b.author||"")}</span></span><span class="stars">${starStr(b.rating)}</span></li>`).join("");
+    $("topReadsList").innerHTML = topReads.map((b,i)=>`<li draggable="true" data-id="${esc(b.id)}"><span><span class="rank-num">${i+1}</span>${esc(b.title)} — <span class="muted">${esc(b.author||"")}</span></span><span style="display:inline-flex; align-items:center; white-space:nowrap;"><span class="stars">${starStr(b.rating)}</span>${moveButtonsHTML("top", b.id, i===0, i===topReads.length-1)}</span></li>`).join("");
     attachTopReadsDnD($("topReadsList"));
     $("topReadsEmpty").style.display = topReads.length ? "none" : "";
 
@@ -2505,7 +3045,21 @@
     });
     const dnfCount = data.books.filter(b=>b.status==="dnf").length;
 
+    // Yearly goal: first reads (the Books Read definition) finished this calendar year.
+    const year = new Date().getFullYear();
+    const goal = activeProfile().readingGoals[String(year)] || 0;
+    const goalInput = $("goalInput");
+    $("goalLabel").textContent = year + " reading goal";
+    if(document.activeElement !== goalInput) goalInput.value = goal || "";
+    const readThisYear = readBooks.filter(b=>{ const d = parseYmd(b.dateFinished); return d && d.getFullYear() === year; }).length;
+    const goalPct = goal ? Math.min(100, Math.round(readThisYear/goal*100)) : 0;
+
     const tiles = [
+      ...(goal ? [{
+        num: `${readThisYear} / ${goal}`,
+        label: `${year} Goal · ${goalPct}%` + (readThisYear >= goal ? " · reached!" : ` · ${goal-readThisYear} to go`),
+        bar: goalPct
+      }] : []),
       {num: readBooks.length, label:"Books Read"},
       {num: booksPerMonth ? booksPerMonth.toFixed(1) : "—", label:"Books / Month (avg)"},
       {num: totalPages.toLocaleString(), label:"Pages Read"},
@@ -2515,8 +3069,29 @@
       {num: dnfCount, label:"DNF Count"},
       {num: data.books.filter(b=>b.status==="tbr").length, label:"TBR Size"},
     ];
-    $("statGrid").innerHTML = tiles.map(t=>`<div class="stat-tile"><div class="num">${t.num}</div><div class="label">${esc(t.label)}</div></div>`).join("");
+    $("statGrid").innerHTML = tiles.map(t=>`<div class="stat-tile"><div class="num">${esc(t.num)}</div><div class="label">${esc(t.label)}</div>${
+      t.bar!=null ? `<div class="progress-bar"><div style="width:${t.bar}%"></div></div>` : ""}</div>`).join("");
   }
+  // Saving an empty box removes this year's goal.
+  function saveGoal(){
+    const year = String(new Date().getFullYear());
+    const raw = $("goalInput").value.trim();
+    const goals = activeProfile().readingGoals;
+    if(!raw){
+      if(!goals[year]){ toast("Enter a number of books first"); return; }
+      delete goals[year];
+      saveData(); $("goalInput").blur(); renderStats();
+      toast(year + " goal cleared");
+      return;
+    }
+    const target = parseInt(raw, 10);
+    if(!(target >= 1 && target <= 9999)){ toast("Goal must be a whole number from 1 to 9999"); return; }
+    goals[year] = target;
+    saveData(); $("goalInput").blur(); renderStats();
+    toast(`${year} goal set: ${target} book${target===1?"":"s"}`);
+  }
+  $("goalSaveBtn").addEventListener("click", saveGoal);
+  $("goalInput").addEventListener("keydown", (e)=>{ if(e.key === "Enter") saveGoal(); });
 
   // =====================================================================================
   // CHARTS
@@ -2994,20 +3569,25 @@
     }
   };
   function renderLibrary(){
-    const books = data.books.slice().sort(LIBRARY_SORTERS[librarySort] || LIBRARY_SORTERS.title);
-    $("libraryCount").textContent = books.length
-      ? `${books.length} book${books.length!==1?"s":""}` : "";
+    const search = $("librarySearch").value;
+    const total = data.books.length;
+    const books = data.books.filter(b=>matchesSearch(b, search))
+      .sort(LIBRARY_SORTERS[librarySort] || LIBRARY_SORTERS.title);
+    // While searching, the count says how many of the whole library matched.
+    $("libraryCount").textContent = !total ? ""
+      : (books.length === total ? `${total} book${total!==1?"s":""}` : `${books.length} of ${total} books`);
     $("libraryGrid").innerHTML = books.map(b=>`<div class="library-item">
-      ${coverImg(b,"cover")}
-      <div class="library-title">${esc(b.title)}</div>
+      <span class="detail-link" data-detail-id="${esc(b.id)}" title="View details">${coverImg(b,"cover")}</span>
+      <button type="button" class="library-title title-link" data-detail-id="${esc(b.id)}">${esc(b.title)}</button>
       <div class="library-author">${esc(b.author||"")}</div>
     </div>`).join("");
-    $("libraryEmpty").style.display = books.length ? "none" : "";
+    showEmpty("libraryEmpty", !books.length, search);
   }
   $("librarySort").addEventListener("change", (e)=>{
     librarySort = e.target.value;
     renderLibrary();
   });
+  $("librarySearch").addEventListener("input", renderLibrary);
 
   // ---------- PROFILES ----------
   // Switching is just: flush the current library, repoint `data`, redraw. Because `data`
@@ -3177,7 +3757,7 @@
   // entry, not the sender's rating, notes, progress or dates.
   function copyForProfile(book, fromName){
     return makeBook({
-      isbn: book.isbn, title: book.title, author: book.author, cover: book.cover,
+      isbn: book.isbn, title: book.title, author: book.author, cover: book.cover, coverData: book.coverData,
       series: book.series ? Object.assign({}, book.series) : null,
       format: book.format, pages: book.pages,
       status: "tbr", priority: "someday",
@@ -3290,6 +3870,7 @@
     renderChallenges();
     renderLibrary();
     renderCompare();
+    renderBackupNudge();
   }
 
   // Write once on load. On a first run, or the first run after upgrading from a

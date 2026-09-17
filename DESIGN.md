@@ -1,6 +1,6 @@
 # Book Tracker — Design Document
 
-Describes the application as it exists in `book-tracker.html` (commit `d13ecb7` plus the fixes listed in §10). It documents current behaviour; it is not a proposal.
+Describes the application as it exists in `book-tracker.html` (commit `d13ecb7` plus the fixes, usability changes and new features listed in §10). It documents current behaviour; it is not a proposal.
 
 ---
 
@@ -29,9 +29,9 @@ Book Tracker is a personal reading log that runs entirely in the browser. It tra
 
 | Section | Lines (approx.) | Contents |
 |---|---|---|
-| `<style>` | 13–225 | Design tokens, light/dark themes, all component CSS |
-| Markup | 227–702 | Header, selection bar, tab bar, 9 view panels, 4 modal dialogs, toast, chart tooltip |
-| `<script>` | 704–3305 | Whole app in one strict-mode IIFE |
+| `<style>` | 13–262 | Design tokens, light/dark themes, all component CSS |
+| Markup | 264–819 | Header, selection bar, tab bar, 9 view panels, 5 modal dialogs, toast, chart tooltip |
+| `<script>` | 821–3886 | Whole app in one strict-mode IIFE |
 
 ### 2.2 Runtime model
 
@@ -50,9 +50,9 @@ localStorage["bookTrackerProfiles_v1"]
 
 - **Single source of truth:** the in-memory `store`. `data` points into the active profile, so almost all feature code reads and writes `data.books` / `data.challenges` and never needs to know profiles exist.
 - **Render strategy:** "rebuild everything". After any change, `renderAll()` calls 13 render functions. Each one filters `data.books`, builds an HTML string, and assigns it to `innerHTML`. This is simple, and the screen always matches the data. The trade-off is that all interpolated text must go through `esc()`.
-- **Event handling:** delegated. Listeners sit on `document.body` or on stable containers and dispatch on `data-*` attributes (`data-action`, `data-id`, `data-tier-move`, `data-send-id`, `data-grab-from`, `data-chart-toggle`, `data-tip`, `data-select-id`, `data-challenge`, `data-prof-*`). Re-rendering therefore never orphans a listener.
+- **Event handling:** delegated. Listeners sit on `document.body` or on stable containers and dispatch on `data-*` attributes (`data-detail-id`, `data-action`, `data-id`, `data-tier-move`, `data-move` / `data-move-list`, `data-send-id`, `data-grab-from`, `data-chart-toggle`, `data-tip`, `data-select-id`, `data-challenge`, `data-prof-*`). Re-rendering therefore never orphans a listener.
 - **View switching:** each tab is a `.view` div, and the active one has `.active` (CSS `display:block`). Switching tabs moves the class and calls `renderAll()`.
-- **Module-level UI state** (not persisted): `selectionMode`, `selectedIds` (Set), `editingId`, `titleHits`, `bulkEntries`, `bulkRawText`, `bulkStopRequested`, `dragSrcId`, `chartViewMode`, `librarySort`, `sendBookId`, `coverProbeCache`.
+- **Module-level UI state** (not persisted): `selectionMode`, `selectedIds` (Set), `editingId`, `titleHits`, `bulkEntries`, `bulkRawText`, `bulkStopRequested`, `dragSrcId`, `dragDropped`, `chartViewMode`, `librarySort`, `sendBookId`, `coverProbeCache`, `saveCount` and `pendingUndo` (undo, §5.8), `editCoverData` (upload in the open Edit dialog, §5.13), `detailBookId` (§5.14). Search boxes and the series sort are read straight from their inputs at render time.
 
 ### 2.3 Utilities
 
@@ -62,7 +62,9 @@ localStorage["bookTrackerProfiles_v1"]
 | `splitList(str)` | `"a, b,,c"` → `["a","b","c"]` |
 | `uid()` | base-36 timestamp + random suffix |
 | `esc(s)` | HTML-escapes `& < > " '` |
-| `toast(msg, isError)` | Bottom-centre notification: 2.2 s normally, resets its timer on repeat calls. Error toasts last 6 s and can't be replaced by a normal toast while showing. |
+| `toast(msg, isError, opts)` | Bottom-centre notification: 2.2 s normally, resets its timer on repeat calls. Error toasts last 6 s and can't be replaced by a normal toast while showing. `opts.action = {label, run}` adds a clickable button (Undo), and `opts.ms` sets the duration. |
+| `matchesSearch(book, query)` | The one search rule for every tab: case-insensitive substring of title or author. An empty query matches everything. |
+| `showEmpty(emptyId, isEmpty, filtering)` | Shows a tab's empty-state message. While a search or filter is active it reads "No books match the current search or filters." instead of the default text. |
 | `todayStr()` / `parseYmd(s)` | Local-calendar `YYYY-MM-DD` ↔ `Date`. Used for every stored date, so nothing depends on UTC. |
 | `makeBook(overrides)` / `makeProfile(name, overrides)` / `blankLibrary()` | Canonical record constructors, so every creation path produces the same fields |
 
@@ -97,9 +99,12 @@ localStorage["bookTrackerProfiles_v1"]
 | `emoji` | string | max 4 chars; blank → 📚 |
 | `color` | hex string | one of 8 `PROFILE_COLORS`; becomes the app `--accent` |
 | `created` | `YYYY-MM-DD` | |
+| `lastBackupAt` | ISO timestamp \| null | set by Export (this profile) and Backup All (every profile); null = never |
+| `lastBackupBookCount` | int ≥ 0 | book count at that backup |
+| `readingGoals` | `{ "YYYY": int }` | yearly book goals (§5.12); normalized to 4-digit year keys with targets 1–9999 |
 | `data` | Library | `{ books: Book[], challenges: Challenge[] }` |
 
-`normalizeStore()` fills in missing profile fields, only accepts `#rrggbb` colours, and repairs an invalid `activeId`. It runs on load and on backup restore. Every library passes through `normalizeLibrary()` → `normalizeBook()` / `normalizeChallenge()` on load, legacy migration, backup restore, and single-library import. These drop non-object entries, restrict enums to known values, coerce numbers (clamping progress to 0–100 and rating to 0–5), validate dates, turn lists into string arrays, default a missing title to "Untitled", and pad or trim bingo cards to 25 squares.
+`normalizeStore()` fills in missing profile fields, only accepts `#rrggbb` colours and parseable `lastBackupAt` timestamps, and repairs an invalid `activeId`. It runs on load and on backup restore. Every library passes through `normalizeLibrary()` → `normalizeBook()` / `normalizeChallenge()` on load, legacy migration, backup restore, and single-library import. These drop non-object entries, restrict enums to known values, coerce numbers (clamping progress to 0–100 and rating to 0–5), validate dates, turn lists into string arrays, default a missing title to "Untitled", and pad or trim bingo cards to 25 squares.
 
 ### 3.4 Book
 
@@ -110,6 +115,7 @@ localStorage["bookTrackerProfiles_v1"]
 | `title` | string | `""` | required in form |
 | `author` | string | `""` | comma-joined if several |
 | `cover` | URL string | `""` | only verified URLs are stored by lookups |
+| `coverData` | image data URL | `""` | uploaded cover (§5.13); shown instead of `cover` when present. Normalized to `data:image/(png\|jpeg\|gif\|webp);base64,…` of at most 200,000 chars, else `""` |
 | `series` | `{name, num}` \| null | `null` | `num` may be fractional (step 0.5) or null |
 | `format` | `"physical"\|"ebook"\|"audiobook"` | `"physical"` | badge only |
 | `pages` | int \| null | `null` | stats, charts |
@@ -127,8 +133,9 @@ localStorage["bookTrackerProfiles_v1"]
 | `shelves` | string[] | `[]` | TBR shelf filter, badges |
 | `tags` | string[] | `[]` | genre/mood; charts, mood picks, recs |
 | `dateAdded` | `YYYY-MM-DD` | today | kept across edits |
-| `sortIndex` | int | *(absent)* | added by TBR drag-and-drop |
-| `topReadRank` | int | *(absent)* | added by Top 5 drag-and-drop |
+| `owned` | bool | `true` | `false` = wishlist (§5.15). Anything but an explicit `false` normalizes to `true`, so older data reads as owned |
+| `sortIndex` | int | *(absent)* | added by TBR drag-and-drop or ↑/↓ |
+| `topReadRank` | int | *(absent)* | added by Top 5 drag-and-drop or ↑/↓ |
 
 A **reread** is modelled as a *separate* book record: a copy with a new `id`, `isReread: true`, `status: "reading"`, reset progress, dates, and notes, and copied quotes.
 
@@ -147,6 +154,8 @@ Bingo challenges always have exactly 25 items. Squares the user hasn't named are
 | `book-tracker-<profile-slug>.json` | Library `{books, challenges}` | **Export** |
 | `book-tracker-all-profiles-<date>.json` | `{kind:"bookTrackerBackup", version:1, exported, activeId, profiles}` | **Backup All Profiles** |
 
+Profile-level settings (`readingGoals`, `lastBackupAt`) travel only in the Backup All file. A single-profile Export carries just the library. Uploaded covers are inside book records, so both formats include them.
+
 **Import** checks the file's contents: a `profiles` array means a full restore, which replaces every profile after a confirm. A `books` array means a single library, which replaces the active profile's library (with a confirm if it isn't empty).
 
 ---
@@ -155,8 +164,8 @@ Bingo challenges always have exactly 25 items. Squares the user hasn't named are
 
 ### 4.1 Global chrome
 
-- **Header:** app title, a profile chip (emoji + `<select>` switcher), and **Manage Profiles**. Action buttons: **+ Add Book**, **Select Books**, **Export**, **Import**, **Backup All Profiles**, **Bulk Import (CSV/ISBNs)**. The two file inputs are hidden and triggered by those buttons.
-- **Selection bar** (sticky, shown only in select mode): count, Select all visible, Clear, Check for Covers, Clear Covers, Delete Selected, Done.
+- **Header:** app title, a profile chip (emoji + `<select>` switcher), **Manage Profiles**, and a backup reminder (§5.9) with a **Back up now** link, shown only when a backup is due. Action buttons: **+ Add Book**, **Select Books**, **Export**, **Import**, **Backup All Profiles**, **Bulk Import (CSV/ISBNs)**. The two file inputs are hidden and triggered by those buttons.
+- **Selection bar** (sticky, shown only in select mode): count, Select all visible, Clear, Check for Covers, Clear Covers, Delete Selected, Done. Bulk edits: a comma-separated text box, an "as genre/mood tags / as shelves" select, and **Add to Selected**; a "Move selected to…" status select and **Apply** (§5.6).
 - **Tab bar:** pill buttons with `data-view`.
 - **Toast** and **chart tooltip:** single shared floating elements.
 
@@ -164,9 +173,12 @@ Bingo challenges always have exactly 25 items. Squares the user hasn't named are
 
 Used in the TBR, Reading, Read, DNF, Series, Mood Picks, and Recommendations lists.
 
+- Clicking the **cover** or the **title** opens the read-only detail view (§5.14). The title is a `<button class="title-link">`, so it's keyboard reachable.
+
 - 56×80 cover or a text placeholder (first 20 chars of the title).
 - Title, author ("Unknown author" if blank).
-- Badges: series + number, format, *Next Up* (gold), *★ Top Read* (gold), *Reread*, each shelf, each tag.
+- Badges: series + number, format, *Next Up* (gold), *★ Top Read* (gold), *Reread*, *Wishlist* (dashed accent outline; books with `owned: false` that are either on the TBR, wherever the card appears, or shown on the Read tab), each shelf, each tag.
+- Cover: the uploaded `coverData` if present, otherwise `cover`, otherwise the placeholder.
 - Status extras: progress bar (reading), stars and notes excerpt (read), "Dropped: reason" (dnf).
 - Actions by status:
 
@@ -177,6 +189,7 @@ Used in the TBR, Reading, Read, DNF, Series, Mood Picks, and Recommendations lis
 | reading | Mark Finished, DNF |
 | read | Log Reread |
 | all (only if >1 profile) | Send to… |
+| tbr, in the Up Next / Someday tiers only | ↑ / ↓ (disabled at the ends of the tier) |
 
 - In select mode, a checkbox appears top-left and a selected card gets an accent outline.
 
@@ -194,15 +207,15 @@ Used in the TBR, Reading, Read, DNF, Series, Mood Picks, and Recommendations lis
 
 | Tab | Contents |
 |---|---|
-| **TBR** | *Next Up Suggestions* panel (shown only if any). Search (title/author), shelf filter, genre/mood filter (options rebuilt on every render), 🎲 Pick for me (result shown under the toolbar). Two draggable tiers: **Up Next** and **Someday**, ordered by `sortIndex`. |
-| **Currently Reading** | Cards with status `reading`. |
+| **TBR** | *Next Up Suggestions* panel (shown only if any). Search (title/author), shelf filter, owned filter (Owned + wishlist / Owned only / Wishlist only), genre/mood filter (options rebuilt on every render), 🎲 Pick for me (result shown under the toolbar). Two draggable tiers: **Up Next** and **Someday**, ordered by `sortIndex`. |
+| **Currently Reading** | Search (title/author), then cards with status `reading`. |
 | **Read** | Search, sort (newest/oldest finished, highest rated, title A–Z), "Rereads only" checkbox. |
-| **DNF Pile** | Cards with status `dnf`. |
-| **Series** | One card per series name (alphabetical): read count / total, % bar, Next Up badge, member books sorted by number. |
-| **Rankings & Favorites** | Two-column grid: 🏆 Top 5 Reads (draggable), 🔁 Reread Candidates, ✍️ Top Authors (top 10), 📖 Top Series (top 10), then 💬 Favorite Quotes. |
-| **Stats & Pace** | Stat tiles, then four charts, each with a "View as table" toggle. |
+| **DNF Pile** | Search (title/author), then cards with status `dnf`. |
+| **Series** | Sort select: Name A–Z (default), Closest to complete, Next Up available first (§5.10). One card per series: read count / total, % bar, Next Up badge, member books sorted by number. |
+| **Rankings & Favorites** | Two-column grid: 🏆 Top 5 Reads (drag, or ↑/↓ on each row), 🔁 Reread Candidates, ✍️ Top Authors (top 10), 📖 Top Series (top 10), then 💬 Favorite Quotes. |
+| **Stats & Pace** | "‹year› reading goal" number box + **Save goal** (Enter also saves), stat tiles (led by the goal tile when a goal is set), then four charts, each with a "View as table" toggle. |
 | **Discovery** | 🎲 Pick For Me, 🌙 Mood-Based Picks, 👥 Compare With Another Profile, ✨ Recommended For You, 🎯 Reading Challenges. |
-| **Library** | Cover-grid browse view of every book (2:3 covers, title, author, no actions). Sort by title or by author, with authorless books last. Shows a book count. |
+| **Library** | Cover-grid browse view of every book (2:3 covers, title, author, no action buttons; cover or title opens the detail view). Search (title/author). Sort by title or by author, with authorless books last. Shows a book count, or "N of M books" while searching. |
 
 ### 4.4 Dialogs
 
@@ -211,12 +224,13 @@ All dialogs use `.modal-overlay` / `.modal`. Clicking the backdrop closes a dial
 **Add / Edit Book**
 1. *ISBN lookup:* ISBN field + Lookup. Fills title, author, pages, and cover, and merges tag suggestions.
 2. *Search by title:* up to 8 candidate buttons (cover, title, author · year · pages). Picking one fills the form, resolves a working cover, and merges tags.
-3. Core fields: Title*, Author, Cover URL, Series name / #, Format, Pages, Status.
+3. Core fields: Title*, Author, Cover URL, **Upload cover…** (preview thumbnail, Replace / Remove upload, status line; §5.13), Series name / #, Format, Pages, Status.
 4. Fields that depend on status:
 
 | Field | tbr | reading | read | dnf |
 |---|:-:|:-:|:-:|:-:|
 | TBR Priority | ✓ | | | |
+| Owned or wishlist | ✓ | ✓ | ✓ | ✓ |
 | Progress slider | | ✓ | | |
 | Dates started/finished | | | ✓ | ✓ |
 | Rating | | | ✓ | |
@@ -226,7 +240,7 @@ All dialogs use `.modal-overlay` / `.modal`. Clicking the backdrop closes a dial
 | Quotes (`text \|\| page` per line) | | | ✓ | |
 
 5. Always shown: Shelves (comma-separated), Genre/mood tags (comma-separated).
-6. Actions: Delete (edit only, confirm), Cancel, Save. Save rebuilds the record with `makeBook` and keeps `dateAdded`.
+6. Actions: Delete (edit only, confirm, then an Undo toast; §5.8), Cancel, Save. Save lays the form values over the existing record (or `{}` for a new book) and passes the result through `normalizeBook`. Fields the form doesn't show survive the edit: `dateAdded`, `sortIndex`, `topReadRank`. `coverData` comes from the upload state, and `owned` from the ownership select.
 
 **Bulk Import:** two stages.
 - *Preview:* "Found N new book(s)". An optional **"Title and ISBN columns are separate lists"** checkbox appears only when some rows contain both, and its hint gives the import count for each reading. Then "Add as" priority, Cancel, and Start Import.
@@ -235,6 +249,8 @@ All dialogs use `.modal-overlay` / `.modal`. Clicking the backdrop closes a dial
 **Profiles:** one row per profile with an editable emoji input, a name input (saves on every keystroke, no re-render so the caret isn't lost), 8 colour swatches, Active badge or Switch to, Duplicate (deep JSON copy), Delete (blocked for the last profile, with confirm), and "N books · added date". Below: Add a profile (Enter submits). New profiles get colours in turn from the palette.
 
 **Send to another profile:** one button per other profile.
+
+**Book detail** (read-only): opened from a card's or Library item's cover/title. Shows the cover (110×165), title, author, a definition list of every field that has a value, then full sections for the DNF reason, notes (line breaks kept), and every quote. Buttons: **Edit** (closes this and opens Add/Edit for the book) and **Close**; clicking the backdrop also closes it.
 
 ### 4.5 Native prompts
 
@@ -248,14 +264,14 @@ All dialogs use `.modal-overlay` / `.modal`. Clicking the backdrop closes a dial
 For each series, find the highest-numbered **read** book. The suggestion is the lowest-numbered **tbr** book above it. Books with no series number are ignored. Suggestions appear in the TBR panel, as a badge on the matching TBR cards, and on the Series tab.
 
 ### 5.2 Rankings
-- **Top 5 Reads:** read books with `isTopRead`. Books with a `topReadRank` come first in rank order, then the rest by rating descending, cut to 5. Dragging sets `topReadRank` on the visible rows.
+- **Top 5 Reads:** read books with `isTopRead`. Books with a `topReadRank` come first in rank order, then the rest by rating descending, cut to 5. Dragging and the ↑/↓ buttons both call `applyTopReadOrder`, which sets `topReadRank` on the visible rows.
 - **Reread Candidates:** any book with `isRereadCandidate`, whatever its status.
 - **Top Authors:** first-read (non-reread) books with an author, grouped on the author with case, punctuation and spaces removed ("R. J. Barker" = "RJ Barker"; non-Latin names fall back to a case-insensitive match). Displays the first spelling seen. Sorted by count, then by average rating of rated books. Top 10.
 - **Top Series:** series with at least 1 read book, sorted by average rating of rated read books, then read count. Top 10.
 - **Quotes:** every quote from every book, attributed "— Title, p. N".
 
 ### 5.3 Stats tiles
-Built from `chartsReadBooks()` = status `read` and **not** a reread:
+Built from `chartsReadBooks()` = status `read` and **not** a reread. When the current year has a goal, a **‹year› Goal** tile comes first (§5.12):
 
 | Tile | Formula |
 |---|---|
@@ -289,19 +305,66 @@ All charts are hand-built HTML/SVG, use colours from the palette tokens, share a
 
 ### 5.6 Multi-select operations
 - **Select all visible:** every `.book-card[data-id]` in the active view.
-- **Delete Selected:** confirm, then remove.
+- **Delete Selected:** confirm, then remove with an Undo toast (§5.8).
+- **Add to Selected (tags/shelves):** splits the text box on commas and appends each label to the chosen field of every selected book, skipping labels the book already has (case-insensitive). Books that gain nothing aren't counted.
+- **Move selected to status:** does what that status's card button does. *reading* sets `dateStarted` if unset. *read* sets progress 100 and `dateFinished` = today. *dnf* sets `dateFinished` = today. *tbr* only changes the status. Books already in the target status are skipped, and no dialog opens.
+- Both bulk edits go through `bulkUpdate`: each changed book is copied, edited, and rebuilt with `normalizeBook` before one save and redraw. The selection stays in place afterwards.
 - **Check for Covers:** runs through the selected books one at a time, and the button shows "Checking i/N". For each book:
+  0. Books with an uploaded cover (`coverData`) are skipped entirely.
   1. Probe the current cover. If it is OK, skip. If it timed out, count it as *stalled* and **leave it alone**.
   2. If it is missing, run `fetchIsbnData(isbn)`. If that gives no cover, run `fetchByTitleAuthor(title, author)`.
   3. Replace the cover only if a different, verified cover was found.
   The toast reports how many were updated, and how many stalled if any did.
-- **Clear Covers:** blanks the covers (with a confirm) so a wrong-but-loadable cover can be resolved again.
+- **Clear Covers:** blanks the cover **URLs** (with a confirm) so a wrong-but-loadable cover can be resolved again. Uploaded covers are left alone; they can only be removed in the Edit dialog.
 
 ### 5.7 Profiles
 - **Switch:** save → set `activeId` → repoint `data` → leave select mode → save → apply theme → re-render. The toast names the new profile.
 - **Theme:** the profile colour becomes `--accent`, and `--accent-ink` is set to dark or white based on Rec. 601 luma (> 0.6 → dark). The document title becomes "‹name› — Book Tracker".
-- **Send to…** and **Add to my TBR** both use `copyForProfile`. It copies bibliographic fields, series, format, pages, shelves, and tags. Status is set to tbr/someday, notes to "From ‹sender›", and reading history is dropped. Both refuse duplicates via `sameBook`.
+- **Send to…** and **Add to my TBR** both use `copyForProfile`. It copies bibliographic fields (including an uploaded `coverData`), series, format, pages, shelves, and tags. The copy gets the default `owned: true`. Status is set to tbr/someday, notes to "From ‹sender›", and reading history is dropped. Both refuse duplicates via `sameBook`.
 - **`sameBook(a,b)`:** if both books have ISBNs (digits/X only), compare ISBNs. Otherwise compare trimmed, lower-cased title **and** author.
+
+### 5.8 Undo for book deletes
+- Deleting books (single delete in the Edit dialog, or Delete Selected) goes through `deleteBooksWithUndo(ids, message)`. It records each removed book with its index in `data.books`, removes them, saves, and shows a toast with an **Undo** button for 8 seconds (`UNDO_MS`).
+- **Undo** puts the books back at their original indexes (inserted in ascending order) and shows "Restored N books".
+- Deleted books are held in memory only (`pendingUndo`). The offer lapses when the 8 seconds run out, or on **any** later `saveData()`: every save increments `saveCount`, and an undo recorded at an older count is dropped. Switching profile and importing both save, so an undo can never restore books into a different library. Clicking a stale Undo shows "Nothing to undo".
+- Challenge and profile deletes remain confirm-only.
+
+### 5.9 Backup reminder
+- **Export** sets `lastBackupAt` / `lastBackupBookCount` on the active profile. **Backup All Profiles** sets them on every profile *before* building the file, so a restored backup knows when it was made.
+- `backupReminder(profile)` returns a message when the profile has books and either **≥ 14 days** (`BACKUP_STALE_DAYS`) have passed since the last backup, or **≥ 20 books** (`BACKUP_STALE_GROWTH`) have been added since. A never-backed-up profile is measured from its `created` date with a baseline of 0 books, so a brand-new library isn't flagged on its first book.
+- Messages: "⚠ Never backed up", "⚠ Last backup N days ago", "⚠ N books added since last backup". Hovering shows the exact last-backup time. **Back up now** runs Backup All Profiles. It's rendered by `renderBackupNudge()` as part of `renderAll()`. Nothing blocks.
+
+### 5.10 Series sort
+`SERIES_SORTERS`: **name** (`localeCompare`); **complete** (read ÷ total descending, then more books read, then name); **nextup** (series with a Next Up suggestion first, then name).
+
+### 5.11 Reordering without drag
+TBR tier cards and Top 5 rows have ↑/↓ buttons (`moveButtonsHTML`). `moveInList(list, id, dir)` reads the list's current on-screen order from the DOM, just as a drop does. It then swaps the book with its neighbour and passes the new order to the same function the drag uses: `applyTierOrder(tier, ids)` for TBR (including the filtered-view slot logic) or `applyTopReadOrder(ids)`. Finally it saves, redraws, and puts focus back on the same button so repeated presses keep moving the book.
+
+### 5.12 Reading goal
+- Stored per profile in `readingGoals`, keyed by calendar year, so past years' goals stay put.
+- **Save goal** (or Enter) validates a whole number from 1 to 9999. Saving an empty box removes the current year's goal. It saves and re-renders Stats.
+- Progress counts `chartsReadBooks()` (status `read`, not rereads, the same definition as **Books Read**) whose `dateFinished` falls in the current local calendar year. Read books without a finish date don't count toward the goal.
+- The tile shows `read / target`, "‹year› Goal · N%", then either "· N to go" or "· reached!", plus a progress bar capped at 100%. There's no tile when no goal is set.
+- The input shows the saved goal on each render, except while it has focus, so typing isn't overwritten.
+
+### 5.13 Uploaded covers
+- **Upload cover…** in the Add/Edit dialog opens an `image/*` file picker. `imageFileToCoverData(file)` then:
+  1. rejects anything that isn't an image, or is over 25 MB;
+  2. decodes it and scales it down (never up) to fit **300 × 450** (`COVER_UPLOAD_MAX_W/H`);
+  3. draws it onto a canvas with a white background (so transparent PNGs don't turn black);
+  4. re-encodes as JPEG at quality 0.85, stepping down through 0.7, 0.55 and 0.4 until the data URL is ≤ **200,000 characters** (`COVER_DATA_MAX`, ~150 KB), or refuses the image.
+- The result is held in `editCoverData` with a preview and a size readout, and is written to the book only on Save. **Remove upload** clears it.
+- Display priority everywhere `coverImg` is used: `coverData` → `cover` → text placeholder.
+- `normalizeBook` keeps `coverData` only if it matches `COVER_DATA_RE` and is within the size cap, so imports can't bring in oversized or non-image data.
+- **Storage cost:** a typical upload is 10–60 KB, and browsers give each origin roughly 5 MB of `localStorage`. Around a hundred uploaded covers can fill it, at which point `saveData` shows its "Couldn't save" error (§10.1 #7).
+
+### 5.14 Book detail view
+`openDetail(book)` builds a `<dl>` of the fields that have values. Which rows appear depends on status: Priority for tbr, Progress for reading, Rating for read. The rest are Ownership, Series, Format, Pages, ISBN, Started, Finished and Added (dates via `toLocaleDateString`), Flags, Shelves, Tags, and whether the cover is uploaded or from a URL. Below that come the DNF reason, the full notes (`white-space: pre-wrap`), and every quote with its page. Everything goes through `esc()`. Delegation: a click on any `[data-detail-id]` is handled first in the body click listener. Focus moves to **Close** when the dialog opens.
+
+### 5.15 Owned vs. wishlist
+- `owned` defaults to `true`. The Add/Edit dialog shows **Owned or wishlist** for every status (to be read, reading, read, did not finish), because a book can be finished or dropped without being owned. The detail view shows Ownership for every status too.
+- The *Wishlist* badge shows on any TBR book with `owned: false`, and on not-owned read books **only on the Read tab** (`renderRead` passes `{wishlistBadge:true}` to `bookCardHTML`). The same read book shown on Series, Recommendations and so on, and not-owned DNF or currently-reading books, get no badge.
+- The owned filter exists only on the TBR tab. It narrows both tiers, and counts as an active filter for the empty-state message.
 
 ---
 
@@ -408,6 +471,8 @@ Dark mode follows the operating system only. There is no manual theme toggle.
 ### 8.4 Accessibility notes (current state)
 - Every chart has a table view.
 - Tooltips appear on mouse hover only (no keyboard or touch equivalent).
+- Book titles on cards and Library items are real buttons, so the detail view can be opened from the keyboard.
+- Reordering doesn't require drag-and-drop: ↑/↓ buttons (with `aria-label`s) work by touch and keyboard, and keep focus between presses.
 - Cover images use `alt=""`. The title is shown next to them, or used as placeholder text.
 - Tabs are plain buttons without ARIA tab roles. Modals don't trap focus and don't close on Escape.
 - Form labels in the book dialog are not linked to inputs with `for`. The profile dialog's "Add a profile" label is.
@@ -419,6 +484,7 @@ Dark mode follows the operating system only. There is no manual theme toggle.
 - **Data locality:** libraries never leave the browser. Outbound requests carry only ISBNs, titles, and authors to the public APIs above.
 - **Output escaping:** `esc()` is applied to user and API text inserted via `innerHTML`, including attribute values such as cover `src`, `data-title`, and every book/challenge id in `data-*` attributes. The chart tooltip is filled with `textContent`, so decoded `data-tip` text can never become markup.
 - **JSONP:** the iTunes response runs as a script with page privileges. Apple is implicitly trusted.
+- **Uploaded covers:** stored only as `data:image/(png|jpeg|gif|webp);base64,…` URLs of bounded size (checked on upload and in `normalizeBook`), so a `coverData` value can't carry a script URL or arbitrary markup into an `<img src>`.
 - **Import:** JSON is parsed with `JSON.parse`, then every profile, book and challenge is normalized (§3.3), so imported values reach the HTML templates only in their expected types.
 
 ---
@@ -443,11 +509,38 @@ These were found while reviewing the code and then fixed. Each fix was checked i
 | 10 | Dragging between tiers had no preview, a cancelled drag left the DOM out of order, and reordering in a filtered view caused `sortIndex` collisions | Cross-container preview, re-render on a cancelled drag, and filtered reorders fill the visible books' original slots so hidden books keep their positions |
 | 11 | Pick for me on the TBR tab drew its result on the Discovery tab | The result renders under the TBR toolbar |
 | 12 | Top Authors split name variants and counted rereads | Normalized author key; rereads excluded |
+| 13 | Saving a book from the Edit dialog rebuilt it from blank fields, so its `sortIndex` (TBR position) and `topReadRank` (Top 5 position) were lost on every edit | Save merges the form over the existing record and runs `normalizeBook` (§4.4) |
 
-### 10.2 Still open
+### 10.2 Usability changes
+
+Made from `usability-fixes.md` and checked in headless Edge (49 checks).
+
+| # | Friction | Change |
+|---|---|---|
+| U1 | Search existed only on TBR and Read | Search on Currently Reading, DNF Pile and Library too. All tabs use `matchesSearch`, and empty states say when a search or filter is hiding everything. |
+| U2 | Selection mode could only delete or fix covers | Bulk add tags/shelves and bulk status change through `normalizeBook` (§5.6) |
+| U3 | Book deletes were permanent | 8-second Undo after single and bulk book deletes (§5.8). Challenge/profile deletes stay confirm-only. |
+| U4 | Series tab was alphabetical only | Sort by closest to complete, or Next Up available first (§5.10) |
+| U5 | No sign a backup was overdue | Per-profile last-backup tracking and a header reminder (§5.9) |
+| U6 | Reordering needed drag-and-drop (unusable on touch) | ↑/↓ buttons on TBR tier cards and Top 5 rows, sharing the drag's ordering code (§5.11) |
+
+### 10.3 New features
+
+Made from `new-features.md` and checked in headless Edge (51 checks, plus the earlier suites re-run).
+
+| # | Feature | Summary |
+|---|---|---|
+| F1 | Numeric reading goal | Per-profile, per-year target with a progress tile on Stats & Pace (§5.12) |
+| F2 | Manual cover upload | Shrunk, size-capped JPEG data URL in `coverData`; wins over the URL (§5.13) |
+| F3 | Book detail view | Read-only dialog from a cover or title click, with full notes and quotes (§5.14) |
+| F4 | Owned vs. wishlist | `owned` field, dialog select for TBR, Wishlist badge and TBR filter (§5.15) |
+
+### 10.4 Still open
 
 1. **Full re-render on every change.** Every mutation and tab switch rebuilds all 13 views. This is simple and correct but scales linearly with library size. It's a deliberate trade-off rather than a bug.
 2. **Legacy data key** `bookTrackerData_v1` is left in place after migration, on purpose. Deleting it would break an older copy of the file opened in the same browser.
-3. **Touch devices.** HTML5 drag-and-drop doesn't work on most touch devices, and chart tooltips need a mouse (every chart has a table view).
+3. **Touch devices.** HTML5 drag-and-drop still doesn't work on most touch devices (use the ↑/↓ buttons instead), and chart tooltips need a mouse (every chart has a table view).
 4. **Drag position in grids.** The drop position is based only on vertical position, so ordering within a single row of a multi-column card grid is approximate.
 5. **Comma-separated labels.** Challenge goals and bingo squares can't contain commas.
+6. **Uploaded covers use shared storage.** Each upload counts against the ~5 MB `localStorage` quota shared by every profile in the browser (§5.13).
+7. **Dialogs and keyboard.** Dialogs, including the new detail view, don't close on Escape or trap focus (§8.4).
