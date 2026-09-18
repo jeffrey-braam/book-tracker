@@ -50,7 +50,7 @@ localStorage["bookTrackerProfiles_v1"]
 
 - **Single source of truth:** the in-memory `store`. `data` points into the active profile, so almost all feature code reads and writes `data.books` / `data.challenges` and never needs to know profiles exist.
 - **Render strategy:** "rebuild everything". After any change, `renderAll()` calls 13 render functions. Each one filters `data.books`, builds an HTML string, and assigns it to `innerHTML`. This is simple, and the screen always matches the data. The trade-off is that all interpolated text must go through `esc()`.
-- **Event handling:** delegated. Listeners sit on `document.body` or on stable containers and dispatch on `data-*` attributes (`data-detail-id`, `data-action`, `data-id`, `data-tier-move`, `data-move` / `data-move-list`, `data-send-id`, `data-grab-from`, `data-chart-toggle`, `data-tip`, `data-select-id`, `data-challenge`, `data-prof-*`). Re-rendering therefore never orphans a listener.
+- **Event handling:** delegated. Listeners sit on `document.body` or on stable containers and dispatch on `data-*` attributes (`data-detail-id`, `data-action`, `data-id`, `data-tier-move`, `data-move` / `data-move-list`, `data-send-id`, `data-log-add` / `data-log-save` / `data-log-remove`, `data-grab-from`, `data-chart-toggle`, `data-tip`, `data-select-id`, `data-challenge`, `data-prof-*`). Re-rendering therefore never orphans a listener.
 - **View switching:** each tab is a `.view` div, and the active one has `.active` (CSS `display:block`). Switching tabs moves the class and calls `renderAll()`.
 - **Module-level UI state** (not persisted): `selectionMode`, `selectedIds` (Set), `editingId`, `titleHits`, `bulkEntries`, `bulkRawText`, `bulkStopRequested`, `dragSrcId`, `dragDropped`, `chartViewMode`, `librarySort`, `sendBookId`, `coverProbeCache`, `saveCount` and `pendingUndo` (undo, §5.8), `editCoverData` (upload in the open Edit dialog, §5.13), `detailBookId` (§5.14). Search boxes and the series sort are read straight from their inputs at render time.
 
@@ -136,8 +136,9 @@ localStorage["bookTrackerProfiles_v1"]
 | `owned` | bool | `true` | `false` = wishlist (§5.15). Anything but an explicit `false` normalizes to `true`, so older data reads as owned |
 | `sortIndex` | int | *(absent)* | added by TBR drag-and-drop or ↑/↓ |
 | `topReadRank` | int | *(absent)* | added by Top 5 drag-and-drop or ↑/↓ |
+| `readingLog` | `{date, pages}[]` | `[]` | daily page log (§5.16). One entry per day, oldest first. `normalizeReadingLog` drops bad dates and non-positive counts, and adds same-day entries together (capped at `READING_LOG_MAX` = 5000) |
 
-A **reread** is modelled as a *separate* book record: a copy with a new `id`, `isReread: true`, `status: "reading"`, reset progress, dates, and notes, and copied quotes.
+A **reread** is modelled as a *separate* book record: a copy with a new `id`, `isReread: true`, `status: "reading"`, reset progress, dates, notes and reading log, and copied quotes.
 
 ### 3.5 Challenge
 
@@ -179,7 +180,7 @@ Used in the TBR, Reading, Read, DNF, Series, Mood Picks, and Recommendations lis
 - Title, author ("Unknown author" if blank).
 - Badges: series + number, format, *Next Up* (gold), *★ Top Read* (gold), *Reread*, *Wishlist* (dashed accent outline; books with `owned: false` that are either on the TBR, wherever the card appears, or shown on the Read tab), each shelf, each tag.
 - Cover: the uploaded `coverData` if present, otherwise `cover`, otherwise the placeholder.
-- Status extras: progress bar (reading), stars and notes excerpt (read), "Dropped: reason" (dnf).
+- Status extras: progress bar and the **Log pages** row (reading, §5.16), stars and notes excerpt (read), "Dropped: reason" (dnf).
 - Actions by status:
 
 | Status | Buttons |
@@ -213,7 +214,7 @@ Used in the TBR, Reading, Read, DNF, Series, Mood Picks, and Recommendations lis
 | **DNF Pile** | Search (title/author), then cards with status `dnf`. |
 | **Series** | Sort select: Name A–Z (default), Closest to complete, Next Up available first (§5.10). One card per series: read count / total, % bar, Next Up badge, member books sorted by number. |
 | **Rankings & Favorites** | Two-column grid: 🏆 Top 5 Reads (drag, or ↑/↓ on each row), 🔁 Reread Candidates, ✍️ Top Authors (top 10), 📖 Top Series (top 10), then 💬 Favorite Quotes. |
-| **Stats & Pace** | "‹year› reading goal" number box + **Save goal** (Enter also saves), stat tiles (led by the goal tile when a goal is set), then four charts, each with a "View as table" toggle. |
+| **Stats & Pace** | "‹year› reading goal" number box + **Save goal** (Enter also saves), stat tiles (led by the goal tile when a goal is set, then the page-log tiles once anything is logged), the **Currently Reading Pace** table and the **Pages Logged per Day** chart (§5.16), then four more charts. Every chart has a "View as table" toggle. |
 | **Discovery** | 🎲 Pick For Me, 🌙 Mood-Based Picks, 👥 Compare With Another Profile, ✨ Recommended For You, 🎯 Reading Challenges. |
 | **Library** | Cover-grid browse view of every book (2:3 covers, title, author, no action buttons; cover or title opens the detail view). Search (title/author). Sort by title or by author, with authorless books last. Shows a book count, or "N of M books" while searching. |
 
@@ -292,6 +293,7 @@ All charts are hand-built HTML/SVG, use colours from the palette tokens, share a
 | Fiction vs Nonfiction | 100% segmented bar + legend | Tag `fiction` vs `nonfiction`/`non-fiction` (case-insensitive). Untagged books are counted and noted as excluded. Inline % label only if the segment is ≥12%. |
 | Page Length Distribution | Donut (200×200 viewBox) | Bins <200, 200–349, 350–499, 500–699, 700+, using the sequential ordinal ramp from light to dark. Label if the slice is ≥6%. Unknown length is excluded and noted. |
 | Books by Genre / Tag | Horizontal bars, single hue | Tags other than fiction/nonfiction. More than 8 tags → top 7 + "Other". Count sits inside the bar if the bar is ≥22% of max, otherwise to its right. |
+| Pages Logged per Day | Bars, single hue, last 30 days | Sums `readingLog` across every book (any status, rereads included). Top corners rounded, 2px gaps. Each whole day column is the hover target. Table view lists only days with pages, newest first. Unlike the charts below, it counts pages when they are read rather than when a book is finished. |
 | Pages Read per Month | Line + 10% area wash, horizontal scroll | Books with both a finish date and pages. A continuous month series runs from the first month to the current month, with zero-filled gaps. Y max rounded up by `niceMax`. 5 grid lines. At most ~10 x labels. End point marked and labelled. 10px invisible hit circles for tooltips. |
 
 ### 5.5 Discovery
@@ -365,6 +367,15 @@ TBR tier cards and Top 5 rows have ↑/↓ buttons (`moveButtonsHTML`). `moveInL
 - `owned` defaults to `true`. The Add/Edit dialog shows **Owned or wishlist** for every status (to be read, reading, read, did not finish), because a book can be finished or dropped without being owned. The detail view shows Ownership for every status too.
 - The *Wishlist* badge shows on any TBR book with `owned: false`, and on not-owned read books **only on the Read tab** (`renderRead` passes `{wishlistBadge:true}` to `bookCardHTML`). The same read book shown on Series, Recommendations and so on, and not-owned DNF or currently-reading books, get no badge.
 - The owned filter exists only on the TBR tab. It narrows both tiers, and counts as an active filter for the empty-state message.
+
+### 5.16 Daily page log and pace
+- Each Currently Reading card has a pages box, a date box (defaults to today, can't be set to a future day) and **Log pages** (Enter in the pages box does the same). `addLogEntry` accepts 1–5000 pages. A second entry for the same day is added to the first.
+- When `pages` is known, logging raises `progress` to logged ÷ pages (capped at 100%). It never lowers it, because a reader who starts logging partway through has read more than the log shows. Logging a day before `dateStarted` (or with none set) moves `dateStarted` back to that day.
+- The card shows "Today: N pages · M logged in total · Edit log" once anything is logged. **Edit log** opens the detail view, which lists the log newest first. Each day has a pages box with **Save** (Enter also saves) and **Remove**, for fixing typos. Saving 0 removes the day, and values outside 0–5000 are refused.
+- Corrections go through `setLogEntry`. Normally `progress` only moves forward, but if it sits exactly where the log put it (logged ÷ pages, before the correction), it follows the corrected log up or down. That way a typo that pushed a book to 100% is undone. Progress set some other way, such as the slider, is left alone.
+- **Stat tiles** (only once some book has a log entry), summed across all books: Pages Today; Pages / Day over the last 7 and 30 days (divided by every day in the window, not only reading days); Reading Streak (consecutive days with pages, counting back from today, or from yesterday if nothing is logged today yet).
+- **Currently Reading Pace** table, one row per reading book: pages read = max(logged, progress% × pages); pages/day = logged ÷ days from the first entry to today inclusive; est. finish = today + ⌈remaining ÷ pages/day⌉, or "Any page now" when nothing is left. It shows "—" without a log or a page count, with a hint explaining why.
+- Dates are stepped by calendar day (`daysAgoStr`), so a daylight-saving change can't skip or repeat a day.
 
 ---
 
@@ -534,6 +545,7 @@ Made from `new-features.md` and checked in headless Edge (51 checks, plus the ea
 | F2 | Manual cover upload | Shrunk, size-capped JPEG data URL in `coverData`; wins over the URL (§5.13) |
 | F3 | Book detail view | Read-only dialog from a cover or title click, with full notes and quotes (§5.14) |
 | F4 | Owned vs. wishlist | `owned` field, dialog select for TBR, Wishlist badge and TBR filter (§5.15) |
+| F5 | Daily page log | Pages read per day on Currently Reading books, feeding pace tiles, a per-book pace/finish-date table and a daily chart on Stats & Pace (§5.16) |
 
 ### 10.4 Still open
 

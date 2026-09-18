@@ -103,6 +103,16 @@
   .progress-bar > div{background:var(--accent); height:100%;}
   .stars{color:var(--gold); font-size:0.85rem; letter-spacing:1px;}
   .card-actions{display:flex; gap:4px; flex-wrap:wrap; margin-top:6px;}
+  /* "Log pages" row on a Currently Reading card: pages box, date box, button. */
+  .log-row{display:flex; gap:4px; flex-wrap:wrap; align-items:center; margin-top:6px; font-size:0.78rem;}
+  .log-row input[type=number]{width:70px;}
+  .log-row input[type=date]{width:auto; max-width:140px;}
+  .log-list{list-style:none; margin:0; padding:0; max-height:220px; overflow:auto; font-size:0.84rem;}
+  .log-list li{display:flex; justify-content:space-between; align-items:center; gap:8px; padding:4px 0; border-bottom:1px solid var(--border);}
+  .log-list li:last-child{border-bottom:none;}
+  .log-list input[type=number]{width:70px;}
+  .log-list .log-controls{display:inline-flex; gap:4px; align-items:center; flex-wrap:wrap; justify-content:flex-end;}
+  button.title-link.log-edit-link{display:inline; text-decoration:underline; color:inherit; font-size:inherit;}
   .book-card.dragging{opacity:0.4;}
   .priority-tier{margin-bottom:18px;}
   .priority-tier h3{color:var(--muted); text-transform:uppercase; font-size:0.78rem; letter-spacing:0.5px;}
@@ -475,6 +485,19 @@
       <button class="secondary small" id="goalSaveBtn">Save goal</button>
     </div>
     <div class="stat-grid" id="statGrid"></div>
+
+    <!-- Built from the daily page log kept on Currently Reading cards. -->
+    <div class="chart-card" style="margin-top:22px;">
+      <div class="chart-head"><h3>Currently Reading Pace</h3></div>
+      <div id="readingPaceWrap"></div>
+    </div>
+    <div class="chart-card" style="margin-bottom:0;">
+      <div class="chart-head">
+        <h3>Pages Logged per Day (last 30 days)</h3>
+        <button class="chart-toggle" data-chart-toggle="daily">View as table</button>
+      </div>
+      <div class="chart-body" id="dailyPagesChartWrap"></div>
+    </div>
   </div>
 
   <div class="panel">
@@ -847,6 +870,8 @@
   const COVER_DATA_MAX = 200000;
   const COVER_DATA_RE = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+\/=]+$/;
   const COVER_UPLOAD_MAX_W = 300, COVER_UPLOAD_MAX_H = 450;
+  // Ceiling on pages logged for one book on one day — a typo guard, not a judgement.
+  const READING_LOG_MAX = 5000;
 
   let store = loadStore();
   let data = activeProfile().data;
@@ -988,12 +1013,26 @@
       coverData: (typeof raw.coverData === "string" && raw.coverData.length <= COVER_DATA_MAX
         && COVER_DATA_RE.test(raw.coverData)) ? raw.coverData : "",
       // Missing means owned, so libraries saved before this field existed are unchanged.
-      owned: raw.owned !== false
+      owned: raw.owned !== false,
+      readingLog: normalizeReadingLog(raw.readingLog)
     });
     // The two ordering fields only exist once a list has been dragged.
     if(isFinite(parseFloat(raw.sortIndex))) book.sortIndex = parseFloat(raw.sortIndex);
     if(isFinite(parseFloat(raw.topReadRank))) book.topReadRank = parseFloat(raw.topReadRank);
     return book;
+  }
+  // The daily page log: one {date, pages} entry per calendar day, oldest first. Entries
+  // with a bad date or a non-positive count are dropped, and two entries for the same day
+  // (a hand-edited backup, say) are added together rather than one overwriting the other.
+  function normalizeReadingLog(raw){
+    const byDate = {};
+    (Array.isArray(raw) ? raw : []).forEach(e=>{
+      if(!e || typeof e !== "object" || !parseYmd(e.date)) return;
+      const pages = parseInt(e.pages,10);
+      if(!(pages > 0)) return;
+      byDate[e.date] = Math.min(READING_LOG_MAX, (byDate[e.date]||0) + pages);
+    });
+    return Object.keys(byDate).sort().map(date=>({ date, pages: byDate[date] }));
   }
   function normalizeChallenge(raw){
     const type = raw.type === "bingo" ? "bingo" : "checklist";
@@ -1042,7 +1081,7 @@
       pages:null, status:"tbr", priority:"someday", progress:0, dateStarted:null,
       dateFinished:null, rating:0, notes:"", dnfReason:"", isTopRead:false,
       isRereadCandidate:false, isReread:false, quotes:[], shelves:[], tags:[],
-      dateAdded: todayStr(), coverData:"", owned:true
+      dateAdded: todayStr(), coverData:"", owned:true, readingLog:[]
     }, overrides);
   }
 
@@ -2521,6 +2560,17 @@
     let extra = "";
     if(book.status==="reading"){
       extra += `<div class="progress-bar"><div style="width:${book.progress||0}%"></div></div><div class="muted">${book.progress||0}% complete</div>`;
+      // Daily page log. The date defaults to today but can be moved back to catch up on a
+      // day that was missed; it cannot go into the future.
+      const today = todayStr();
+      const loggedToday = (book.readingLog||[]).filter(e=>e.date===today).reduce((s,e)=>s+e.pages,0);
+      const loggedTotal = loggedPages(book);
+      extra += `<div class="log-row">
+        <input type="number" min="1" max="${READING_LOG_MAX}" placeholder="Pages" aria-label="Pages read" data-log-pages="${esc(book.id)}">
+        <input type="date" value="${today}" max="${today}" aria-label="Day read" data-log-date="${esc(book.id)}">
+        <button class="small secondary" data-log-add="${esc(book.id)}">Log pages</button>
+      </div>`;
+      if(loggedTotal) extra += `<div class="muted">Today: ${loggedToday.toLocaleString()} page${loggedToday===1?"":"s"} · ${loggedTotal.toLocaleString()} logged in total · <button type="button" class="title-link log-edit-link" data-detail-id="${esc(book.id)}">Edit log</button></div>`;
     }
     if(book.status==="read"){
       extra += `<div class="stars">${starStr(book.rating)}</div>`;
@@ -2606,7 +2656,7 @@
       else if(action==="finish-reading"){ book.status="read"; book.progress=100; book.dateFinished = todayStr(); saveData(); renderAll(); openModal(book); }
       else if(action==="dnf-reading"){ book.status="dnf"; book.dateFinished = todayStr(); saveData(); renderAll(); openModal(book); }
       else if(action==="reread"){
-        const newBook = Object.assign({}, book, { id: uid(), isReread:true, status:"reading", progress:0, dateStarted: todayStr(), dateFinished:null, notes:"", quotes: (book.quotes||[]).slice() });
+        const newBook = Object.assign({}, book, { id: uid(), isReread:true, status:"reading", progress:0, dateStarted: todayStr(), dateFinished:null, notes:"", quotes: (book.quotes||[]).slice(), readingLog: [] });
         data.books.push(newBook);
         saveData(); renderAll();
         toast("New reread started — track it in Currently Reading");
@@ -2616,6 +2666,16 @@
     const moveBtn = e.target.closest("[data-move]");
     if(moveBtn){
       moveInList(moveBtn.dataset.moveList, moveBtn.dataset.id, moveBtn.dataset.move);
+      return;
+    }
+    const logBtn = e.target.closest("[data-log-add]");
+    if(logBtn){ addLogEntry(logBtn.dataset.logAdd, logBtn.closest(".log-row")); return; }
+    const logSave = e.target.closest("[data-log-save]");
+    if(logSave){ saveLogEdit(logSave.closest("li")); return; }
+    const logDel = e.target.closest("[data-log-remove]");
+    if(logDel){
+      const book = data.books.find(b=>b.id===logDel.dataset.logRemove);
+      if(book) setLogEntry(book, logDel.dataset.logDate, 0);
       return;
     }
     const tierBtn = e.target.closest("[data-tier-move]");
@@ -2647,10 +2707,72 @@
     }
   });
 
+  // Enter in a card's pages box logs it, the same as pressing the button; Enter in a
+  // detail-view entry saves the correction.
+  document.body.addEventListener("keydown", (e)=>{
+    if(e.key !== "Enter" || !e.target.closest) return;
+    const input = e.target.closest("[data-log-pages]");
+    if(input){ e.preventDefault(); addLogEntry(input.dataset.logPages, input.closest(".log-row")); return; }
+    const editInput = e.target.closest("[data-log-edit]");
+    if(editInput){ e.preventDefault(); saveLogEdit(editInput.closest("li")); }
+  });
+
+  // ---------- DAILY PAGE LOG ----------
+  // A book in progress can record how many pages were read on each day. Several entries for
+  // one day add together. When the page count is known, logging also nudges the progress
+  // bar forward to match — but never backward, since a reader who started logging halfway
+  // through has read more than the log shows.
+  function loggedPages(book){
+    return (book.readingLog||[]).reduce((s,e)=>s+e.pages,0);
+  }
+  function addLogEntry(id, row){
+    const book = data.books.find(b=>b.id===id);
+    if(!book || !row) return;
+    const pagesInput = row.querySelector("[data-log-pages]");
+    const pages = parseInt(pagesInput.value,10);
+    const date = row.querySelector("[data-log-date]").value || todayStr();
+    if(!(pages >= 1 && pages <= READING_LOG_MAX)){ toast(`Enter a number of pages from 1 to ${READING_LOG_MAX}`); pagesInput.focus(); return; }
+    if(!parseYmd(date) || date > todayStr()){ toast("Pick today or an earlier day"); return; }
+    book.readingLog = normalizeReadingLog((book.readingLog||[]).concat([{ date, pages }]));
+    if(book.pages){
+      const pct = Math.min(100, Math.round(loggedPages(book) / book.pages * 100));
+      if(pct > (book.progress||0)) book.progress = pct;
+    }
+    if(!book.dateStarted || date < book.dateStarted) book.dateStarted = date;
+    saveData(); renderAll();
+    toast(`Logged ${pages} page${pages===1?"":"s"} for “${book.title}”` + (date===todayStr() ? "" : " on " + formatYmd(date)));
+  }
+  // Corrects one day's entry in place (pages = 0 removes it), for fixing a typo.
+  // Progress normally only moves forward, but a typo may be what pushed it forward: if the
+  // bar sits exactly where the log put it, it follows the corrected log back down.
+  // A progress figure set some other way (the slider) is left alone.
+  function setLogEntry(book, date, pages){
+    const logPct = () => book.pages ? Math.min(100, Math.round(loggedPages(book) / book.pages * 100)) : null;
+    const before = logPct();
+    const log = (book.readingLog||[]).filter(en=>en.date!==date);
+    if(pages > 0) log.push({ date, pages });
+    book.readingLog = normalizeReadingLog(log);
+    const after = logPct();
+    if(before != null && (book.progress||0) === before) book.progress = after;
+    saveData(); renderAll(); openDetail(book);
+    toast(pages > 0 ? `${formatYmd(date)} updated to ${pages} page${pages===1?"":"s"}` : "Log entry removed");
+  }
+  function saveLogEdit(li){
+    const input = li && li.querySelector("[data-log-edit]");
+    const book = input && data.books.find(b=>b.id===input.dataset.logEdit);
+    if(!book) return;
+    const pages = parseInt(input.value,10);
+    if(!(pages >= 0 && pages <= READING_LOG_MAX)){ toast(`Enter a number of pages from 0 to ${READING_LOG_MAX} (0 removes the day)`); input.focus(); return; }
+    const current = (book.readingLog||[]).find(en=>en.date===input.dataset.logDate);
+    if(current && current.pages === pages){ toast("No change"); return; }
+    setLogEntry(book, input.dataset.logDate, pages);
+  }
+
   // ---------- BOOK DETAIL (read-only) ----------
   // Everything about one book in a readable layout: full notes and quotes rather than the
-  // card's 120-character excerpt. Rows with no value are left out. Nothing here edits;
-  // the Edit button closes this and opens the normal Add/Edit dialog.
+  // card's 120-character excerpt. Rows with no value are left out. The one thing editable
+  // here is the reading log (fix a day's page count, or remove the day); everything else
+  // is changed through the Edit button, which closes this and opens the Add/Edit dialog.
   let detailBookId = null;
   function formatYmd(s){
     const d = parseYmd(s);
@@ -2678,6 +2800,16 @@
     row("Cover", book.coverData ? "Uploaded image" : (book.cover ? "From URL" : ""));
 
     const sections = [];
+    if(book.readingLog && book.readingLog.length){
+      const total = loggedPages(book);
+      sections.push(`<div class="detail-section"><h3>Reading log (${total.toLocaleString()} page${total===1?"":"s"} over ${book.readingLog.length} day${book.readingLog.length===1?"":"s"})</h3>
+        <ul class="log-list">${book.readingLog.slice().reverse().map(e=>
+          `<li><span>${esc(formatYmd(e.date))}</span><span class="log-controls">
+            <input type="number" min="0" max="${READING_LOG_MAX}" value="${e.pages}" data-log-edit="${esc(book.id)}" data-log-date="${esc(e.date)}" aria-label="Pages read on ${esc(formatYmd(e.date))}"> pages
+            <button class="small" data-log-save aria-label="Save pages for ${esc(formatYmd(e.date))}">Save</button>
+            <button class="small secondary" data-log-remove="${esc(book.id)}" data-log-date="${esc(e.date)}" aria-label="Remove entry for ${esc(formatYmd(e.date))}">Remove</button></span></li>`).join("")}</ul>
+        <p class="muted" style="margin:6px 0 0; font-size:0.78rem;">Change a number and press Save (or Enter) to fix a typo.</p></div>`);
+    }
     if(book.dnfReason) sections.push(`<div class="detail-section"><h3>Reason for dropping</h3><div class="detail-notes">${esc(book.dnfReason)}</div></div>`);
     if(book.notes) sections.push(`<div class="detail-section"><h3>Notes</h3><div class="detail-notes">${esc(book.notes)}</div></div>`);
     if(book.quotes && book.quotes.length){
@@ -3054,12 +3186,19 @@
     const readThisYear = readBooks.filter(b=>{ const d = parseYmd(b.dateFinished); return d && d.getFullYear() === year; }).length;
     const goalPct = goal ? Math.min(100, Math.round(readThisYear/goal*100)) : 0;
 
+    const pace = logPaceSummary();
     const tiles = [
       ...(goal ? [{
         num: `${readThisYear} / ${goal}`,
         label: `${year} Goal · ${goalPct}%` + (readThisYear >= goal ? " · reached!" : ` · ${goal-readThisYear} to go`),
         bar: goalPct
       }] : []),
+      ...(pace ? [
+        {num: pace.today.toLocaleString(), label:"Pages Today"},
+        {num: pace.avg7.toFixed(1), label:"Pages / Day (last 7 days)"},
+        {num: pace.avg30.toFixed(1), label:"Pages / Day (last 30 days)"},
+        {num: pace.streak + "d", label:"Reading Streak"},
+      ] : []),
       {num: readBooks.length, label:"Books Read"},
       {num: booksPerMonth ? booksPerMonth.toFixed(1) : "—", label:"Books / Month (avg)"},
       {num: totalPages.toLocaleString(), label:"Pages Read"},
@@ -3072,6 +3211,70 @@
     $("statGrid").innerHTML = tiles.map(t=>`<div class="stat-tile"><div class="num">${esc(t.num)}</div><div class="label">${esc(t.label)}</div>${
       t.bar!=null ? `<div class="progress-bar"><div style="width:${t.bar}%"></div></div>` : ""}</div>`).join("");
   }
+  // ---------- PACE FROM THE DAILY LOG ----------
+  function ymdOf(d){
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  }
+  // n days before today (0 = today), as YYYY-MM-DD. Steps the calendar, not 24h blocks, so a
+  // daylight-saving change cannot skip or repeat a day.
+  function daysAgoStr(n){
+    const d = new Date();
+    return ymdOf(new Date(d.getFullYear(), d.getMonth(), d.getDate() - n));
+  }
+  function daysBetween(a, b){ return Math.round((parseYmd(b) - parseYmd(a)) / 86400000); }
+  // Pages logged per day across every book in the library, finished ones included.
+  function dailyLogTotals(){
+    const byDate = {};
+    data.books.forEach(b=>(b.readingLog||[]).forEach(e=>{ byDate[e.date] = (byDate[e.date]||0) + e.pages; }));
+    return byDate;
+  }
+  // Headline numbers for the stat tiles, or null when nothing has been logged yet.
+  // The averages divide by every day in the window, reading or not, so they answer "how
+  // many pages a day am I getting through" rather than "how much on a day I read".
+  // The streak counts back from today; if nothing is logged today yet it counts from
+  // yesterday, so an unbroken run doesn't read as zero every morning.
+  function logPaceSummary(){
+    const byDate = dailyLogTotals();
+    if(!Object.keys(byDate).length) return null;
+    const sumLast = n => { let t = 0; for(let i=0; i<n; i++) t += byDate[daysAgoStr(i)]||0; return t; };
+    let streak = 0, i = byDate[daysAgoStr(0)] ? 0 : 1;
+    while(byDate[daysAgoStr(i)]){ streak++; i++; }
+    return { today: byDate[daysAgoStr(0)]||0, avg7: sumLast(7)/7, avg30: sumLast(30)/30, streak };
+  }
+  // One row per Currently Reading book. Pace is pages logged divided by the days since the
+  // first entry (today included), so days off slow it down just as they do in real life.
+  // Pages done takes the higher of the log and the progress slider, and the finish date
+  // projects the remaining pages at that pace.
+  function renderReadingPace(){
+    const wrap = $("readingPaceWrap");
+    const reading = data.books.filter(b=>b.status==="reading");
+    if(!reading.length){
+      wrap.innerHTML = `<div class="chart-empty">Nothing in progress. Start a book to track its pace here.</div>`;
+      return;
+    }
+    const today = todayStr();
+    const rows = reading.map(b=>{
+      const logged = loggedPages(b);
+      const log = b.readingLog||[];
+      const rate = log.length ? logged / (daysBetween(log[0].date, today) + 1) : 0;
+      const done = b.pages ? Math.min(b.pages, Math.max(logged, Math.round((b.progress||0)/100*b.pages))) : logged;
+      let finish = "—";
+      if(b.pages && done >= b.pages) finish = "Any page now";
+      else if(b.pages && rate > 0) finish = formatYmd(daysAgoStr(-Math.ceil((b.pages - done) / rate)));
+      return `<tr>
+        <td>${esc(b.title)}</td>
+        <td class="num-col">${b.pages ? `${done.toLocaleString()} / ${b.pages.toLocaleString()}` : (done ? done.toLocaleString() : "—")}</td>
+        <td class="num-col">${rate ? rate.toFixed(1) : "—"}</td>
+        <td class="num-col">${esc(finish)}</td>
+      </tr>`;
+    }).join("");
+    const hints = [];
+    if(!reading.some(b=>(b.readingLog||[]).length)) hints.push("Log the pages you read each day from a book's card in Currently Reading to see its pace and finish date.");
+    else if(reading.some(b=>!b.pages)) hints.push("Add a page count to a book to get its finish date.");
+    wrap.innerHTML = `<div class="chart-scroll"><table class="chart-table"><thead><tr><th>Book</th><th class="num-col">Pages read</th><th class="num-col">Pages / day</th><th class="num-col">Est. finish</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      + hints.map(h=>`<p class="muted" style="margin-bottom:0;">${esc(h)}</p>`).join("");
+  }
+
   // Saving an empty box removes this year's goal.
   function saveGoal(){
     const year = String(new Date().getFullYear());
@@ -3104,7 +3307,7 @@
   // ---------- CHARTS ----------
   // Every chart here reads from "read" books only (first reads, not rereads) — see the
   // note above the panels. Each chart has a table-view twin toggled via chartViewMode.
-  const chartViewMode = { fiction:"chart", pagerange:"chart", genre:"chart", monthly:"chart" };
+  const chartViewMode = { fiction:"chart", pagerange:"chart", genre:"chart", monthly:"chart", daily:"chart" };
 
   function chartsReadBooks(){
     return data.books.filter(b=>b.status==="read" && !b.isReread);
@@ -3148,6 +3351,8 @@
     renderPageRangeChart();
     renderGenreChart();
     renderMonthlyPagesChart();
+    renderReadingPace();
+    renderDailyPagesChart();
   }
 
   // ---- 1. Fiction vs Nonfiction (segmented bar — a 2-slice pie reads as one number, so this reads as a %) ----
@@ -3385,6 +3590,65 @@
         ${endMarker}
         ${xLabels}
         ${hitCircles}
+      </svg></div>`;
+  }
+
+  // ---- 5. Pages logged per day (bars, last 30 days, from the daily page log) ----
+  // Unlike the charts above this counts pages as they are read, not when a book is
+  // finished, so it includes books still in progress and ones later dropped.
+  function renderDailyPagesChart(){
+    const wrap = $("dailyPagesChartWrap");
+    const byDate = dailyLogTotals();
+    const series = [];
+    for(let i=29; i>=0; i--){ const key = daysAgoStr(i); series.push({ key, pages: byDate[key]||0 }); }
+    if(!series.some(p=>p.pages)){
+      wrap.innerHTML = `<div class="chart-empty">No pages logged in the last 30 days. Log them from a book's card in Currently Reading.</div>`;
+      return;
+    }
+    const dayLabel = key => parseYmd(key).toLocaleDateString(undefined, { month:"short", day:"numeric" });
+
+    if(chartViewMode.daily==="table"){
+      const rows = series.filter(p=>p.pages).reverse();
+      wrap.innerHTML = `<table class="chart-table"><thead><tr><th>Day</th><th class="num-col">Pages logged</th></tr></thead><tbody>
+        ${rows.map(p=>`<tr><td>${esc(formatYmd(p.key))}</td><td class="num-col">${p.pages.toLocaleString()}</td></tr>`).join("")}
+      </tbody></table>`;
+      return;
+    }
+
+    const yMax = niceMax(Math.max(...series.map(p=>p.pages), 1));
+    const barW = 14, gap = 2, stepX = barW + gap;
+    const leftPad = 46, rightPad = 12, topPad = 14, bottomPad = 28, plotH = 140;
+    const width = leftPad + series.length*stepX + rightPad;
+    const height = plotH + topPad + bottomPad;
+    const baseY = topPad + plotH;
+    const yAt = v => topPad + plotH - (v/yMax)*plotH;
+
+    const yTicks = [0, yMax*0.25, yMax*0.5, yMax*0.75, yMax];
+    const gridSvg = yTicks.map(t=>`<line class="grid-line" x1="${leftPad}" x2="${width-rightPad}" y1="${yAt(t)}" y2="${yAt(t)}"></line><text x="${leftPad-8}" y="${yAt(t)+4}" text-anchor="end">${Math.round(t).toLocaleString()}</text>`).join("");
+
+    // Each bar is a path so only its top corners are rounded and the bottom sits flat on
+    // the baseline. The radius shrinks for very short bars so the shape never inverts.
+    // The hover target is the whole column, so even a zero day or a sliver bar is easy to hit.
+    let bars = "", hits = "", xLabels = "";
+    series.forEach((p,i)=>{
+      const x = leftPad + i*stepX + gap/2;
+      const tip = `${dayLabel(p.key)}: ${p.pages.toLocaleString()} page${p.pages===1?"":"s"}`;
+      if(p.pages){
+        const y = yAt(p.pages), r = Math.min(4, (baseY - y)/2, barW/2);
+        bars += `<path d="M${x},${baseY} V${y+r} Q${x},${y} ${x+r},${y} H${x+barW-r} Q${x+barW},${y} ${x+barW},${y+r} V${baseY} Z" fill="var(--series-1)"></path>`;
+      }
+      hits += `<rect x="${x-gap/2}" y="${topPad}" width="${stepX}" height="${plotH}" fill="transparent" data-tip="${esc(tip)}"></rect>`;
+      if(i % 7 === 1 || i === series.length-1){
+        xLabels += `<text x="${x+barW/2}" y="${height-8}" text-anchor="middle">${i === series.length-1 ? "Today" : esc(dayLabel(p.key))}</text>`;
+      }
+    });
+
+    wrap.innerHTML = `<div class="chart-scroll"><svg class="chart-svg" viewBox="0 0 ${width} ${height}" style="width:${width}px; height:${height}px; min-width:100%;">
+        ${gridSvg}
+        ${bars}
+        <line class="axis-line" x1="${leftPad}" x2="${width-rightPad}" y1="${baseY}" y2="${baseY}"></line>
+        ${xLabels}
+        ${hits}
       </svg></div>`;
   }
 
