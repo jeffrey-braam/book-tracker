@@ -29,9 +29,9 @@ Book Tracker is a personal reading log that runs entirely in the browser. It tra
 
 | Section | Lines (approx.) | Contents |
 |---|---|---|
-| `<style>` | 13–262 | Design tokens, light/dark themes, all component CSS |
-| Markup | 264–819 | Header, selection bar, tab bar, 9 view panels, 5 modal dialogs, toast, chart tooltip |
-| `<script>` | 821–3886 | Whole app in one strict-mode IIFE |
+| `<style>` | 13–293 | Design tokens, light/dark themes, all component CSS |
+| Markup | 295–922 | Header, selection bar, tab bar, 8 view panels (one of them holding two sub-panels), 5 modal dialogs, toast, chart tooltip |
+| `<script>` | 923–4723 | Whole app in one strict-mode IIFE |
 
 ### 2.2 Runtime model
 
@@ -50,8 +50,8 @@ localStorage["bookTrackerProfiles_v1"]
 
 - **Single source of truth:** the in-memory `store`. `data` points into the active profile, so almost all feature code reads and writes `data.books` / `data.challenges` and never needs to know profiles exist.
 - **Render strategy:** "rebuild everything". After any change, `renderAll()` calls 13 render functions. Each one filters `data.books`, builds an HTML string, and assigns it to `innerHTML`. This is simple, and the screen always matches the data. The trade-off is that all interpolated text must go through `esc()`.
-- **Event handling:** delegated. Listeners sit on `document.body` or on stable containers and dispatch on `data-*` attributes (`data-detail-id`, `data-action`, `data-id`, `data-tier-move`, `data-move` / `data-move-list`, `data-send-id`, `data-log-add` / `data-log-save` / `data-log-remove`, `data-grab-from`, `data-chart-toggle`, `data-tip`, `data-select-id`, `data-challenge`, `data-prof-*`). Re-rendering therefore never orphans a listener.
-- **View switching:** each tab is a `.view` div, and the active one has `.active` (CSS `display:block`). Switching tabs moves the class and calls `renderAll()`.
+- **Event handling:** delegated. Listeners sit on `document.body` or on stable containers and dispatch on `data-*` attributes (`data-detail-id`, `data-action`, `data-id`, `data-tier-move`, `data-move` / `data-move-list`, `data-send-id`, `data-log-add` / `data-log-save` / `data-log-remove`, `data-listen-add` / `data-listen-save` / `data-listen-remove`, `data-audio-save` / `data-pages-save`, `data-log-kind`, `data-grab-from`, `data-chart-toggle`, `data-tip`, `data-select-id`, `data-challenge`, `data-prof-*`). Re-rendering therefore never orphans a listener.
+- **View switching:** each tab is a `.view` div, and the active one has `.active` (CSS `display:block`). Switching tabs moves the class and calls `renderAll()`. The Logs tab has a second level of the same idea: two `.log-panel` divs, one `.active` at a time (§4.3).
 - **Module-level UI state** (not persisted): `selectionMode`, `selectedIds` (Set), `editingId`, `titleHits`, `bulkEntries`, `bulkRawText`, `bulkStopRequested`, `dragSrcId`, `dragDropped`, `chartViewMode`, `librarySort`, `sendBookId`, `coverProbeCache`, `saveCount` and `pendingUndo` (undo, §5.8), `editCoverData` (upload in the open Edit dialog, §5.13), `detailBookId` (§5.14). Search boxes and the series sort are read straight from their inputs at render time.
 
 ### 2.3 Utilities
@@ -210,18 +210,25 @@ Used in the TBR, Reading, Read, DNF, Series, Mood Picks, and Recommendations lis
 
 ### 4.3 Tabs
 
+The order runs from browsing what you own, through what you are reading and how fast, to
+what you might read next and what you thought of it all. **Library** is the tab the app
+opens on.
+
 | Tab | Contents |
 |---|---|
-| **TBR** | *Next Up Suggestions* panel (shown only if any). Search (title/author), shelf filter, owned filter (Owned + wishlist / Owned only / Wishlist only), genre/mood filter (options rebuilt on every render), 🎲 Pick for me (result shown under the toolbar). Two draggable tiers: **Up Next** and **Someday**, ordered by `sortIndex`. |
-| **Currently Reading** | Search (title/author), then cards with status `reading`. A book counted in pages gets the page-log row; an audiobook gets the listening-log row instead (§5.17). |
-| **Read** | Search, sort (newest/oldest finished, highest rated, title A–Z), "Rereads only" checkbox. |
-| **DNF Pile** | Search (title/author), then cards with status `dnf`. |
-| **Series** | Sort select: Name A–Z (default), Closest to complete, Next Up available first (§5.10). One card per series: read count / total, % bar, Next Up badge, member books sorted by number. |
-| **Rankings & Favorites** | Two-column grid: 🏆 Top 5 Reads (drag, or ↑/↓ on each row), 🔁 Reread Candidates, ✍️ Top Authors (top 10), 📖 Top Series (top 10), then 💬 Favorite Quotes. |
-| **Stats & Pace** | "‹year› reading goal" number box + **Save goal** (Enter also saves), stat tiles (led by the goal tile when a goal is set, then the page-log tiles once anything is logged), the **Currently Reading Pace** table and the **Pages Logged per Day** chart (§5.16), then four more charts. Every chart has a "View as table" toggle. |
-| **Discovery** | 🎲 Pick For Me, 🌙 Mood-Based Picks, 👥 Compare With Another Profile, ✨ Recommended For You, 🎯 Reading Challenges. |
-| **Audiobooks** | Every book with `format: "audiobook"`, whatever its status (§5.17). Five stat tiles over the whole collection, search (title/author), status filter, then one card each with an editable running time, the time listened and left, and a listening-log row. Below, the **Time Listened per Day** line chart with a per-book picker and a "View as table" toggle. |
 | **Library** | Cover-grid browse view of every book (2:3 covers, title, author, no action buttons; cover or title opens the detail view). Search (title/author). Sort by title or by author, with authorless books last. Shows a book count, or "N of M books" while searching. |
+| **Read** | Search, sort (newest/oldest finished, highest rated, title A–Z), "Rereads only" checkbox, then cards with status `read`. |
+| **Logs** | The day-to-day tracker, split into two **sub-tabs** — 🎧 *Audiobooks* and 📖 *Books* — because the two kinds of book are counted in different units. Each side shows only books with status `reading`: five stat tiles over what is in progress, search, one card per book (editable total, amount done and left, a log row, the day's entry) and its own per-day line chart with a per-book picker and a "View as table" toggle. Both sides are generated from the same code (§5.17). |
+| **Pacing** | "‹year› reading goal" number box + **Save goal** (Enter also saves), the stat tiles (led by the goal tile when a goal is set, then the page-log tiles once anything is logged), and the **Currently Reading Pace** table (§5.16). No charts — the ones that describe the library live on Rankings. |
+| **TBR & Discovery** | *Next Up Suggestions* panel (shown only if any). Search, shelf filter, owned filter, genre/mood filter, 🎲 Pick for me (result under the toolbar). Two draggable tiers, **Up Next** and **Someday**, ordered by `sortIndex`. Then 🌙 Mood-Based Picks, 👥 Compare With Another Profile, ✨ Recommended For You and 🎯 Reading Challenges. |
+| **DNF** | Search (title/author), then cards with status `dnf`. |
+| **Series %** | Sort select: Name A–Z (default), Closest to complete, Next Up available first (§5.10). One card per series: read count / total, % bar, Next Up badge, member books sorted by number. |
+| **Rankings** | Two-column grid: 🏆 Top 5 Reads (drag, or ↑/↓ on each row), 🔁 Reread Candidates, ✍️ Top Authors (top 10), 📖 Top Series (top 10). Then 💬 Favorite Quotes, and the four charts that describe the library rather than the pace: Fiction vs Nonfiction, Page Length Distribution, Books by Genre/Tag and Pages Read per Month (§5.4). |
+
+**Sub-tabs.** Only the Logs tab has them. They work exactly as the tab bar does — one delegated
+listener on `#logsSubtabs`, `.active` moved between the buttons and between the `.log-panel`
+divs — and the chosen side is remembered in `activeLogKind` for as long as the page is open.
+
 
 ### 4.4 Dialogs
 
@@ -292,19 +299,18 @@ Built from `chartsReadBooks()` = status `read` and **not** a reread. When the cu
 | TBR Size | status tbr |
 
 ### 5.4 Charts
-All charts are hand-built HTML/SVG, use colours from the palette tokens, share a hover tooltip (`data-tip`), and can be shown as a table. Each has an explanatory empty state.
+All charts are hand-built HTML/SVG, use colours from the palette tokens, share a hover tooltip (`data-tip`), and can be shown as a table. Each has an explanatory empty state. The first four live on **Rankings** and describe the library; the last lives on **Logs**, once per sub-tab, and describes the last 30 days. The "View as table" buttons share one delegated handler, which redraws just the one daily chart or all four library charts.
 
 | Chart | Form | Data rules |
 |---|---|---|
 | Fiction vs Nonfiction | 100% segmented bar + legend | Tag `fiction` vs `nonfiction`/`non-fiction` (case-insensitive). Untagged books are counted and noted as excluded. Inline % label only if the segment is ≥12%. |
 | Page Length Distribution | Donut (200×200 viewBox) | Bins <200, 200–349, 350–499, 500–699, 700+, using the sequential ordinal ramp from light to dark. Label if the slice is ≥6%. Unknown length is excluded and noted. |
 | Books by Genre / Tag | Horizontal bars, single hue | Tags other than fiction/nonfiction. More than 8 tags → top 7 + "Other". Count sits inside the bar if the bar is ≥22% of max, otherwise to its right. |
-| Pages Logged per Day | Bars, single hue, last 30 days | Sums `readingLog` across every book (any status, rereads included). Top corners rounded, 2px gaps. Each whole day column is the hover target. Table view lists only days with pages, newest first. Unlike the charts below, it counts pages when they are read rather than when a book is finished. |
-| Time Listened per Day | Line + 10% area wash, last 30 days, on the **Audiobooks** tab | Sums `listenLog` across every audiobook, or one on its own when the picker names it. Y max from `niceTimeMax`, which rounds up to a value that quarters into clean times, so the ticks read "30m", "1h", "1h 30m". A dot marks each day with something logged, so an isolated day is visible where the line alone would look flat. End point marked and labelled; 9px invisible hit circles for tooltips; a footnote gives the 30-day total and daily average. Table view lists only days with time, newest first. |
+| Logged per Day | Line + 10% area wash, last 30 days, one on each side of the **Logs** tab | `renderDailyLogChart(kind)`, drawn once and used twice. Sums that side's log across its books, or one book on its own when the picker names it. Y max and tick labels come from the kind (`niceTimeMax` + "1h 30m" for minutes, `niceMax` + a plain number for pages). A dot marks each day with something logged, so an isolated day is visible where the line alone would look flat. End point marked and labelled; 9px invisible hit circles for tooltips; a footnote gives the 30-day total and daily average. Table view lists only days with something logged, newest first. Unlike the charts above it counts as things are read rather than when a book is finished, so it includes books still in progress and ones later dropped. |
 | Pages Read per Month | Line + 10% area wash, horizontal scroll | Books with both a finish date and pages. A continuous month series runs from the first month to the current month, with zero-filled gaps. Y max rounded up by `niceMax`. 5 grid lines. At most ~10 x labels. End point marked and labelled. 10px invisible hit circles for tooltips. |
 
 ### 5.5 Discovery
-- **Pick For Me** (Discovery tab and TBR toolbar): weighted random pick from the TBR. Up Next weighs 3, Someday weighs 1. The result (cover + Start Reading) is shown in the panel it was requested from: under the TBR toolbar, or in the Discovery panel.
+- **Pick For Me** (the 🎲 button in the TBR toolbar): weighted random pick from the TBR. Up Next weighs 3, Someday weighs 1. The result (cover + Start Reading) is shown under the toolbar. `pickForMe(resultId)` still takes the container to draw into, from when there was a second copy of this button on a separate Discovery tab.
 - **Mood-Based Picks:** a `<select>` of every tag in the library. Shows TBR books with the chosen tag. The selection is kept across re-renders.
 - **Recommended For You:** from read books rated ≥4, add the rating to a score for each of their tags and for their author. Score each TBR book by the sum of its matching tag and author scores. Top 8 with score > 0.
 - **Compare With Another Profile:** pick another profile.
@@ -376,27 +382,78 @@ TBR tier cards and Top 5 rows have ↑/↓ buttons (`moveButtonsHTML`). `moveInL
 - The owned filter exists only on the TBR tab. It narrows both tiers, and counts as an active filter for the empty-state message.
 
 ### 5.16 Daily page log and pace
-- Each Currently Reading card has a pages box, a date box (defaults to today, can't be set to a future day) and **Log pages** (Enter in the pages box does the same). `addLogEntry` accepts 1–5000 pages. A second entry for the same day is added to the first.
+- Each card on the Logs tab's 📖 *Books* side has a pages box, a date box (defaults to today, can't be set to a future day) and **Log pages** (Enter anywhere in the row does the same). `addLogEntry` accepts 1–5000 pages. A second entry for the same day is added to the first.
 - When `pages` is known, logging raises `progress` to logged ÷ pages (capped at 100%). It never lowers it, because a reader who starts logging partway through has read more than the log shows. Logging a day before `dateStarted` (or with none set) moves `dateStarted` back to that day.
-- The card shows "Today: N pages · M logged in total · Edit log" once anything is logged. **Edit log** opens the detail view, which lists the log newest first. Each day has a pages box with **Save** (Enter also saves) and **Remove**, for fixing typos. Saving 0 removes the day, and values outside 0–5000 are refused.
+- The card shows "Today: N pages · M days logged · Edit log" once anything is logged. **Edit log** opens the detail view, which lists the log newest first. Each day has a pages box with **Save** (Enter also saves) and **Remove**, for fixing typos. Saving 0 removes the day, and values outside 0–5000 are refused.
 - Corrections go through `setLogEntry`. Normally `progress` only moves forward, but if it sits exactly where the log put it (logged ÷ pages, before the correction), it follows the corrected log up or down. That way a typo that pushed a book to 100% is undone. Progress set some other way, such as the slider, is left alone.
 - **Stat tiles** (only once some book has a log entry), summed across all books: Pages Today; Pages / Day over the last 7 and 30 days (divided by every day in the window, not only reading days); Reading Streak (consecutive days with pages, counting back from today, or from yesterday if nothing is logged today yet).
-- **Currently Reading Pace** table, one row per reading book, headed *Read / listened*, *Per day*, *Est. finish*. For a book counted in pages: pages read = max(logged, progress% × pages); pages/day = logged ÷ days from the first entry to today inclusive; est. finish = today + ⌈remaining ÷ pages/day⌉, or "Any page now" when nothing is left. An audiobook's row is the same three figures measured in time, from `listenLog` and `audioLength` ("Any minute now" at the end); the h/m in its cells is what tells the two kinds of row apart. Either kind shows "—" without a log or a total, and both hints ask about whichever measure each book is counted in.
+- **Currently Reading Pace** table on the Pacing tab, one row per reading book, headed *Read / listened*, *Per day*, *Est. finish*. One code path for both units, via `LOG_KINDS` (§5.17): done = max(logged, progress% × total); per day = logged ÷ days from the first entry to today inclusive; est. finish = today + ⌈remaining ÷ per day⌉, or "Any page now" / "Any minute now" when nothing is left. The h/m in an audiobook's cells is what tells the two kinds of row apart. Either kind shows "—" without a log or a total, and both hints ask about whichever measure each book is counted in.
 - Dates are stepped by calendar day (`daysAgoStr`), so a daylight-saving change can't skip or repeat a day.
 
-### 5.17 Audiobooks
-- The **Audiobooks** tab is a *view*, not a second library: it lists `data.books` filtered to `format === "audiobook"`, at any status. Nothing else about a book changes when it is an audiobook, so it still appears on TBR, Currently Reading, Read, Series and Library as before.
-- **Minutes are the only stored unit.** `audioLength` and every `listenLog` entry are whole minutes; hours exist only on screen (`formatMinutes` → "12h 34m", "45m"). Every sum stays a plain addition, and nothing has to round-trip through a formatted string.
-- **Times are typed as an hours box plus a minutes box** (`hmInputsHTML` / `readHmPair` / `setHmPair`), used by the card, the detail log editor and the Add/Edit dialog alike. Each box and its unit are one `.hm-pair`, so "h" is never stranded on the next line when a card is narrow; `#audioCards` and `#readingCards`, the two grids that carry input rows, use a 300px minimum column instead of the usual 220px. Two boxes mean there is no format to parse and none to get wrong — "1h 20", "1:20" and "80" cannot be confused because they cannot be typed. `readHmPair` returns `null` when both boxes are empty, so "left blank" is distinguishable from a deliberate zero.
-- **Running time**, editable straight from the card (`saveAudioLength`): hours + minutes + **Save**, Enter anywhere in the row does the same. Clearing both boxes (or zero) removes the length, which is how one entered by mistake is taken off again. The same value is editable in the Add/Edit dialog (§4.4).
-- **Listening log** (`addListenEntry`): an hours + minutes pair, a date box defaulting to today and capped at today, and **Log time** (Enter in the row does the same). Accepts 1 minute to `LISTEN_LOG_MAX`; several entries for one day add together; logging a day before `dateStarted` (or with none set) moves the start back. All exactly as the page log behaves (§5.16).
-- **Progress** follows the log through `syncAudioProgress`: listened ÷ `audioLength`, capped at 100%, and only ever upward — someone who starts logging partway through is further along than the log can show. `setListenEntry` applies the same exception as `setLogEntry`: a correction may pull progress back down, but only when it is sitting exactly where the log put it.
-- **Corrections** live in the detail view, which grows a *Listening log* section beside the reading one: newest day first, each with an hours + minutes pair, **Save** (Enter works) and **Remove**. Saving zero removes the day.
-- **Per card:** status badge (`reading` reads as *Listening*), series, wishlist and tag badges; the running-time row; a progress bar with "X of Y · Z remaining · N%"; the pace line "M a day · est. finish …" (`listenPace`, minutes ÷ days from the first entry to today inclusive). A finished book reads "finished" rather than a projection, and a book with no running time drops the finish clause, since the line above already asks for a length. Then the log row, "Today: … · N days logged · Edit log", and the actions (Edit, plus Start Listening / Mark Finished / DNF, which reuse the shared card actions).
-- **On the Currently Reading tab**, an audiobook card shows the listening-log row in place of the page-log row, plus the same progress bar and time listened/left line — measured in minutes, because that is what an audiobook is counted in. Everything else about the card (badges, Mark Finished, DNF) is unchanged, and books counted in pages are untouched. The three pieces are shared with the Audiobooks tab as `audioFiguresHTML`, `listenLogRowHTML` and `listenLogSummaryHTML` rather than written twice, so the two cards cannot drift apart. Without a running time the bar falls back to the progress slider and the line says so, so the bar is never showing a figure the text contradicts.
-- **Cards are not status-shaped.** Unlike `bookCardHTML`, `audiobookCardHTML` shows an audiobook the same way whether it is waiting, in progress or finished, with the numbers filling in as they become known. Order is currently-listening first, then TBR, read, DNF, and title within each.
-- **Stat tiles** sum the whole collection, never the filtered list — they describe the shelf, and would be confusing if a search changed them: Audiobooks, Total Length (with a count of those without one), Time Listened, Time Remaining (only over books that have a length), Time / Day over the last 7 days.
-- The tab's pages- and minutes-based figures never mix: the Stats & Pace tiles and charts still count pages only, and nothing here is folded into them.
+### 5.17 The two logs
+The Logs tab tracks the same thing twice over: an audiobook against its running time in
+minutes, everything else against its page count in pages. Rather than write the cards,
+tiles and chart once per unit and watch the two drift apart, everything that actually
+differs is gathered in one table and the rest is written once against it.
+
+- **`LOG_KINDS`** has two entries, `audio` and `pages`. Each supplies which books belong
+  (`belongs`), where the log lives (`entries`) and what it is measured against (`total`),
+  two formatters (`fmt` = "2h 30m" / "150 pages", `bare` = the same number where the unit
+  is already established, as on the right of "2h 30m of 10h"), the wording for every label
+  and button, and the chart's axis rules. `id` is "Audio" or "Pages", which is also how
+  every element on the page is named: `log<Id>Cards`, `log<Id>StatGrid`, and so on, so
+  `el(kind, "Cards")` finds the right one.
+- Built on that: `logDone`, `logPace`, `syncLogProgress`, `logFiguresHTML`,
+  `logTotalRowHTML`, `logEntryRowHTML`, `logSummaryHTML`, `logCardHTML`,
+  `renderLogSection`, `logTotalsByDate` and `renderDailyLogChart` — each written once and
+  called twice. The pace table on Pacing (§5.16) reads through the same table.
+- The one thing that cannot be shared is the inner controls of the two editable rows: a
+  time needs an hours and a minutes box, a page count needs one number box. Both rows emit
+  the `data-*` attributes the existing click and keydown handlers already look for, so the
+  handlers themselves never had to learn about the split.
+- **Minutes and pages are the only stored units.** Hours exist only on screen
+  (`formatMinutes`), which keeps every sum a plain addition.
+- **Times are typed as an hours box plus a minutes box** (`hmInputsHTML` / `readHmPair` /
+  `setHmPair`), used by the card, the detail log editor and the Add/Edit dialog alike.
+  Two boxes mean there is no format to parse and none to get wrong — "1h 20", "1:20" and
+  "80" cannot be confused because they cannot be typed. `readHmPair` returns `null` when
+  both boxes are empty, so "left blank" is distinguishable from a deliberate zero. Each box
+  and its unit are one `.hm-pair`, so "h" is never stranded on the next line in a narrow
+  card; `#logAudioCards` and `#logPagesCards` use a 300px minimum column instead of 220px.
+- **The total is editable from the card**: `saveAudioLength` and its paged twin
+  `savePageCount`. Clearing the box (or zero) removes it, which is how one entered by
+  mistake is taken off again. Out-of-range values are refused rather than clamped, so a
+  mistyped total is never silently turned into a different one.
+- **Logging** (`addLogEntry` / `addListenEntry`): several entries for a day add together,
+  and logging a day before `dateStarted` moves the start back. **Progress** follows the log
+  through `syncLogProgress` — listened or read ÷ total, capped at 100%, and only ever
+  upward. `setLogEntry` / `setListenEntry` apply the one exception: a correction may pull
+  progress back down, but only when it is sitting exactly where the log put it.
+- **Corrections** live in the detail view, which shows a *Reading log* or *Listening log*
+  section (or both): newest day first, each with its boxes, **Save** (Enter works) and
+  **Remove**. Saving zero removes the day.
+- **The figures line** shows done, remaining and a percentage. Done takes the higher of the
+  log and the progress slider turned back into an amount — a slider moved by hand is
+  evidence of reading the log never saw — and a book marked *Read* always reads 100%.
+  Without a total the bar falls back to the slider and the line says so, so the bar is never
+  showing a figure the text contradicts.
+- **Only books in progress get a card** (`logInProgress`). The tab answers "what have I got
+  on", so a finished, abandoned or not-yet-started book is not something left to track and
+  does not take up space. Every card therefore has the same status, which is why there is no
+  status badge, no status filter, and no *Start* or *Log Reread* action — only **Mark
+  Finished** and **DNF**, the two ways out of the tab. Cards sort by title.
+- **Nothing is lost when a book leaves.** Its log stays on the record: still counted in the
+  chart below, still in the Pacing figures, and still editable from the book's detail view,
+  reachable from Library, Read, DNF or anywhere else the book appears.
+- **Stat tiles** sum everything in progress, never the filtered list — they would be
+  confusing if a search changed them: In Progress, total, done, remaining (only over books
+  that have a total), and per day over the last 7 days.
+- **The chart is the exception**: it covers every book of its kind, finished ones included,
+  because a day's reading does not stop having happened when the book ends. Marking a book
+  finished must not retroactively flatten last week's chart. Its picker lists them all to
+  match.
+- Audiobook and paged figures never mix. A book changing format simply moves from one
+  sub-tab to the other; both its fields are kept, so nothing is lost either way (§3.4).
 
 ---
 
@@ -569,10 +626,12 @@ Made from `new-features.md` and checked in headless Edge (51 checks, plus the ea
 | F5 | Daily page log | Pages read per day on Currently Reading books, feeding pace tiles, a per-book pace/finish-date table and a daily chart on Stats & Pace (§5.16) |
 | F6 | Audiobooks tab | Every book flagged *Audiobook*, with an editable running time, a minutes-per-day listening log, time listened/remaining per book, collection tiles and a daily line chart (§5.17) |
 | F7 | Audiobooks counted in time throughout | Currently Reading logs minutes for an audiobook instead of pages, the pace table reports either unit, and the Add/Edit dialog swaps the page box for the running time (§5.17, §4.4) |
+| F8 | Tabs reorganised into eight | Library first; Currently Reading and Audiobooks merged into a two-sided **Logs** tab generated from one description of the two units; Stats & Pace narrowed to **Pacing** with its library charts moved to Rankings; Discovery folded into TBR (§4.3, §5.17) |
+| F9 | Logs scoped to books in progress | The Logs tab lists only `reading` books, dropping the status filter, the status badge and the start/reread actions; finished logs stay in the chart, the Pacing figures and the detail view (§5.17) |
 
 ### 10.4 Still open
 
-1. **Full re-render on every change.** Every mutation and tab switch rebuilds all 13 views. This is simple and correct but scales linearly with library size. It's a deliberate trade-off rather than a bug.
+1. **Full re-render on every change.** Every mutation and tab switch rebuilds every view, both sides of the Logs tab included. This is simple and correct but scales linearly with library size. It's a deliberate trade-off rather than a bug.
 2. **Legacy data key** `bookTrackerData_v1` is left in place after migration, on purpose. Deleting it would break an older copy of the file opened in the same browser.
 3. **Touch devices.** HTML5 drag-and-drop still doesn't work on most touch devices (use the ↑/↓ buttons instead), and chart tooltips need a mouse (every chart has a table view).
 4. **Drag position in grids.** The drop position is based only on vertical position, so ordering within a single row of a multi-column card grid is approximate.

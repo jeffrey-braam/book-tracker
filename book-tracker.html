@@ -103,7 +103,7 @@
   .progress-bar > div{background:var(--accent); height:100%;}
   .stars{color:var(--gold); font-size:0.85rem; letter-spacing:1px;}
   .card-actions{display:flex; gap:4px; flex-wrap:wrap; margin-top:6px;}
-  /* "Log pages" row on a Currently Reading card: pages box, date box, button. */
+  /* An input row on a Logs card: the total, or the amount and the day. */
   .log-row{display:flex; gap:4px; flex-wrap:wrap; align-items:center; margin-top:6px; font-size:0.78rem;}
   .log-row input[type=number]{width:70px;}
   .log-row input[type=date]{width:auto; max-width:140px;}
@@ -122,10 +122,19 @@
   .hm-pair{display:inline-flex; align-items:center; gap:3px;}
   .audio-line{font-size:0.78rem; color:var(--muted); margin-top:4px;}
   .audio-line strong{color:var(--ink);}
-  /* Cards that carry input rows need more room than a card that only displays. That is
-     the Audiobooks tab, and Currently Reading, where the day's reading is logged. */
-  #audioCards, #readingCards{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));}
+  /* Cards that carry input rows need more room than a card that only displays - both
+     sides of the Logs tab, where the day's reading and listening are recorded. */
+  #logAudioCards, #logPagesCards{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));}
   .book-card.dragging{opacity:0.4;}
+  /* Sub-tabs inside a tab (the Logs tab's two trackers). Deliberately a different shape
+     from the pill-style tab buttons above, so the two levels never read as one row. */
+  .subtabs{display:flex; gap:4px; flex-wrap:wrap; margin-bottom:16px; border-bottom:1px solid var(--border);}
+  .subtab-btn{background:none; border:none; border-bottom:2px solid transparent; border-radius:0;
+    color:var(--muted); padding:8px 14px; font-size:0.86rem; font-weight:600; cursor:pointer; margin-bottom:-1px;}
+  .subtab-btn:hover{color:var(--ink); filter:none;}
+  .subtab-btn.active{color:var(--accent); border-bottom-color:var(--accent);}
+  .log-panel{display:none;}
+  .log-panel.active{display:block;}
   .priority-tier{margin-bottom:18px;}
   .priority-tier h3{color:var(--muted); text-transform:uppercase; font-size:0.78rem; letter-spacing:0.5px;}
   /* Pop-up dialogs (Add/Edit Book, Bulk Import). The overlay covers the whole screen and
@@ -352,23 +361,145 @@
 </div>
 
 <!-- The tab buttons. Each carries a data-view attribute naming the panel it reveals,
-     e.g. data-view="tbr" shows the element with id="view-tbr". A "data-" attribute is a
-     custom value you can attach to any element and read back from JavaScript. -->
+     e.g. data-view="library" shows the element with id="view-library". A "data-" attribute
+     is a custom value you can attach to any element and read back from JavaScript.
+     The order runs from browsing what you own, through what you are reading and how fast,
+     to what you might read next and what you thought of it all. -->
 <div class="tabs" id="tabBar">
-  <button class="tab-btn active" data-view="tbr">TBR</button>
-  <button class="tab-btn" data-view="reading">Currently Reading</button>
+  <button class="tab-btn active" data-view="library">Library</button>
   <button class="tab-btn" data-view="read">Read</button>
-  <button class="tab-btn" data-view="dnf">DNF Pile</button>
-  <button class="tab-btn" data-view="series">Series</button>
-  <button class="tab-btn" data-view="rankings">Rankings & Favorites</button>
-  <button class="tab-btn" data-view="stats">Stats & Pace</button>
-  <button class="tab-btn" data-view="discovery">Discovery</button>
-  <button class="tab-btn" data-view="audiobooks">Audiobooks</button>
-  <button class="tab-btn" data-view="library">Library</button>
+  <button class="tab-btn" data-view="logs">Logs</button>
+  <button class="tab-btn" data-view="pacing">Pacing</button>
+  <button class="tab-btn" data-view="tbr">TBR &amp; Discovery</button>
+  <button class="tab-btn" data-view="dnf">DNF</button>
+  <button class="tab-btn" data-view="series">Series %</button>
+  <button class="tab-btn" data-view="rankings">Rankings</button>
 </div>
 
-<!-- TBR VIEW -->
-<div class="view active" id="view-tbr">
+<!-- LIBRARY VIEW: every book as a cover grid, with no badges or buttons — a browsing
+     view rather than a management one. -->
+<div class="view active" id="view-library">
+  <div class="panel">
+    <div class="series-head">
+      <h2>📚 Library</h2>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span class="muted" id="libraryCount"></span>
+        <input type="text" id="librarySearch" placeholder="Search title or author..." aria-label="Search library">
+        <select id="librarySort">
+          <option value="title">Sort: Title A–Z</option>
+          <option value="author">Sort: Author A–Z</option>
+        </select>
+      </div>
+    </div>
+    <div class="library-grid" id="libraryGrid"></div>
+    <div class="empty-msg" id="libraryEmpty" style="display:none;">No books yet.</div>
+  </div>
+</div>
+
+<!-- READ VIEW -->
+<div class="view" id="view-read">
+  <div class="panel">
+    <div class="filter-row">
+      <input type="text" class="toolbar-search" id="readSearch" placeholder="Search title or author...">
+      <select id="readSortBy">
+        <option value="dateFinished-desc">Newest finished</option>
+        <option value="dateFinished-asc">Oldest finished</option>
+        <option value="rating-desc">Highest rated</option>
+        <option value="title-asc">Title A-Z</option>
+      </select>
+      <label style="display:flex; align-items:center; gap:5px; font-size:0.8rem; font-weight:normal;"><input type="checkbox" id="showRereadsOnly" style="width:auto;">Rereads only</label>
+    </div>
+    <div class="grid-cards" id="readCards"></div>
+    <div class="empty-msg" id="readEmpty" style="display:none;">No finished books yet.</div>
+  </div>
+</div>
+
+<!-- LOGS VIEW: the day-to-day tracker, split into two sub-tabs because the two kinds of
+     book are counted in different units - an audiobook in minutes against its running
+     time, everything else in pages against its page count. Both sides are built from the
+     same code (see LOG_KINDS in the script below), so they behave identically. -->
+<div class="view" id="view-logs">
+  <div class="subtabs" id="logsSubtabs">
+    <button class="subtab-btn active" data-log-kind="audio">🎧 Audiobooks</button>
+    <button class="subtab-btn" data-log-kind="pages">📖 Books</button>
+  </div>
+  <div class="log-panel active" data-log-kind="audio">
+    <div class="panel">
+      <div class="series-head" style="margin-bottom:12px;">
+        <h2 style="margin:0;">🎧 Audiobooks</h2>
+        <span class="muted" id="logAudioCount"></span>
+      </div>
+      <div class="stat-grid" id="logAudioStatGrid"></div>
+      <div class="filter-row" style="margin-top:16px;">
+        <input type="text" class="toolbar-search" id="logAudioSearch" placeholder="Search title or author...">
+      </div>
+      <div class="grid-cards" id="logAudioCards"></div>
+      <div class="empty-msg" id="logAudioEmpty" style="display:none;">Nothing in progress. Start an audiobook from the TBR or Library and it will appear here.</div>
+    </div>
+    <div class="panel">
+      <div class="chart-card" style="margin-bottom:0;">
+        <div class="chart-head">
+          <h3>Time Listened per Day (last 30 days)</h3>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <select id="logAudioChartBook" aria-label="Which audiobook to chart"></select>
+            <button class="chart-toggle" data-chart-toggle="logAudio">View as table</button>
+          </div>
+        </div>
+        <div class="chart-body" id="logAudioChartWrap"></div>
+      </div>
+    </div>
+  </div>
+  <div class="log-panel" data-log-kind="pages">
+    <div class="panel">
+      <div class="series-head" style="margin-bottom:12px;">
+        <h2 style="margin:0;">📖 Books</h2>
+        <span class="muted" id="logPagesCount"></span>
+      </div>
+      <div class="stat-grid" id="logPagesStatGrid"></div>
+      <div class="filter-row" style="margin-top:16px;">
+        <input type="text" class="toolbar-search" id="logPagesSearch" placeholder="Search title or author...">
+      </div>
+      <div class="grid-cards" id="logPagesCards"></div>
+      <div class="empty-msg" id="logPagesEmpty" style="display:none;">Nothing in progress. Start a book from the TBR or Library and it will appear here.</div>
+    </div>
+    <div class="panel">
+      <div class="chart-card" style="margin-bottom:0;">
+        <div class="chart-head">
+          <h3>Pages Logged per Day (last 30 days)</h3>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <select id="logPagesChartBook" aria-label="Which book to chart"></select>
+            <button class="chart-toggle" data-chart-toggle="logPages">View as table</button>
+          </div>
+        </div>
+        <div class="chart-body" id="logPagesChartWrap"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PACING VIEW: the goal, the headline numbers and the per-book pace table. The charts
+     that describe the library rather than the pace live on Rankings. -->
+<div class="view" id="view-pacing">
+  <div class="panel">
+    <h2>Reading Pace</h2>
+    <!-- Yearly goal: per profile, per calendar year. Clearing the box and saving removes it. -->
+    <div class="goal-row">
+      <label for="goalInput" id="goalLabel">Reading goal</label>
+      <input type="number" id="goalInput" min="1" max="9999" placeholder="e.g. 50">
+      <button class="secondary small" id="goalSaveBtn">Save goal</button>
+    </div>
+    <div class="stat-grid" id="statGrid"></div>
+
+    <!-- Built from the daily logs kept on the Logs tab. -->
+    <div class="chart-card" style="margin-top:22px; margin-bottom:0;">
+      <div class="chart-head"><h3>Currently Reading Pace</h3></div>
+      <div id="readingPaceWrap"></div>
+    </div>
+  </div>
+</div>
+
+<!-- TBR & DISCOVERY VIEW: what to read next, and the ways of choosing it. -->
+<div class="view" id="view-tbr">
   <div class="panel" id="nextUpPanel" style="display:none;">
     <h3>📌 Next Up Suggestions (from finished series)</h3>
     <div class="grid-cards" id="nextUpCards"></div>
@@ -397,34 +528,36 @@
       <div class="empty-msg" id="tbrSomedayEmpty" style="display:none;">Nothing here.</div>
     </div>
   </div>
-</div>
-
-<!-- READING VIEW -->
-<div class="view" id="view-reading">
   <div class="panel">
-    <div class="filter-row">
-      <input type="text" class="toolbar-search" id="readingSearch" placeholder="Search title or author...">
-    </div>
-    <div class="grid-cards" id="readingCards"></div>
-    <div class="empty-msg" id="readingEmpty" style="display:none;">Nothing in progress. Move a book from TBR to start reading.</div>
+    <h2>🌙 Mood-Based Picks</h2>
+    <select id="moodPickerSelect" style="width:100%; margin-bottom:10px;"></select>
+    <div class="grid-cards" id="moodPickResults"></div>
+    <div class="empty-msg" id="moodPickEmpty" style="display:none;">No TBR books tagged with this mood yet.</div>
   </div>
-</div>
-
-<!-- READ VIEW -->
-<div class="view" id="view-read">
+  <!-- Cross-profile comparison: turns the other people on this machine into a
+       recommendation source. -->
   <div class="panel">
-    <div class="filter-row">
-      <input type="text" class="toolbar-search" id="readSearch" placeholder="Search title or author...">
-      <select id="readSortBy">
-        <option value="dateFinished-desc">Newest finished</option>
-        <option value="dateFinished-asc">Oldest finished</option>
-        <option value="rating-desc">Highest rated</option>
-        <option value="title-asc">Title A-Z</option>
-      </select>
-      <label style="display:flex; align-items:center; gap:5px; font-size:0.8rem; font-weight:normal;"><input type="checkbox" id="showRereadsOnly" style="width:auto;">Rereads only</label>
+    <div class="series-head">
+      <h2>👥 Compare With Another Profile</h2>
+      <select id="compareSelect"></select>
     </div>
-    <div class="grid-cards" id="readCards"></div>
-    <div class="empty-msg" id="readEmpty" style="display:none;">No finished books yet.</div>
+    <p class="muted">What the two of you have both read, and what they rated highly that you have not picked up.</p>
+    <div class="compare-cols" id="compareCols"></div>
+    <div class="empty-msg" id="compareEmpty" style="display:none;">Add a second profile to compare libraries.</div>
+  </div>
+  <div class="panel">
+    <h2>✨ Recommended For You</h2>
+    <p class="muted">Based on your highest-rated genres/moods among finished books, matched against your TBR.</p>
+    <div class="grid-cards" id="recsCards"></div>
+    <div class="empty-msg" id="recsEmpty" style="display:none;">Rate a few finished books and tag genres/moods to unlock recommendations.</div>
+  </div>
+  <div class="panel">
+    <div class="series-head">
+      <h2>🎯 Reading Challenges</h2>
+      <button class="secondary small" id="addChallengeBtn">+ New Challenge</button>
+    </div>
+    <div id="challengesList"></div>
+    <div class="empty-msg" id="challengesEmpty" style="display:none;">No challenges yet — try a genre bingo or a decade challenge.</div>
   </div>
 </div>
 
@@ -485,33 +618,6 @@
     <div id="quotesList"></div>
     <div class="empty-msg" id="quotesEmpty" style="display:none;">No quotes saved yet. Add them from a book's edit screen.</div>
   </div>
-</div>
-
-<!-- STATS VIEW -->
-<div class="view" id="view-stats">
-  <div class="panel">
-    <h2>Reading Pace</h2>
-    <!-- Yearly goal: per profile, per calendar year. Clearing the box and saving removes it. -->
-    <div class="goal-row">
-      <label for="goalInput" id="goalLabel">Reading goal</label>
-      <input type="number" id="goalInput" min="1" max="9999" placeholder="e.g. 50">
-      <button class="secondary small" id="goalSaveBtn">Save goal</button>
-    </div>
-    <div class="stat-grid" id="statGrid"></div>
-
-    <!-- Built from the daily page log kept on Currently Reading cards. -->
-    <div class="chart-card" style="margin-top:22px;">
-      <div class="chart-head"><h3>Currently Reading Pace</h3></div>
-      <div id="readingPaceWrap"></div>
-    </div>
-    <div class="chart-card" style="margin-bottom:0;">
-      <div class="chart-head">
-        <h3>Pages Logged per Day (last 30 days)</h3>
-        <button class="chart-toggle" data-chart-toggle="daily">View as table</button>
-      </div>
-      <div class="chart-body" id="dailyPagesChartWrap"></div>
-    </div>
-  </div>
 
   <div class="panel">
     <p class="muted" style="margin-top:0;">The charts below reflect books marked <strong>Read</strong> (first reads only, not rereads).</p>
@@ -547,106 +653,6 @@
       </div>
       <div class="chart-body" id="monthlyPagesChartWrap"></div>
     </div>
-  </div>
-</div>
-
-<!-- DISCOVERY VIEW -->
-<div class="view" id="view-discovery">
-  <div class="two-col">
-    <div class="panel">
-      <h2>🎲 Pick For Me</h2>
-      <p class="muted">Randomly picks from your TBR, weighted toward "Up Next" priority.</p>
-      <button id="pickForMeBtn">Pick a book</button>
-      <div id="pickForMeResult"></div>
-    </div>
-    <div class="panel">
-      <h2>🌙 Mood-Based Picks</h2>
-      <select id="moodPickerSelect" style="width:100%; margin-bottom:10px;"></select>
-      <div class="grid-cards" id="moodPickResults"></div>
-      <div class="empty-msg" id="moodPickEmpty" style="display:none;">No TBR books tagged with this mood yet.</div>
-    </div>
-  </div>
-  <!-- Cross-profile comparison: turns the other people on this machine into a
-       recommendation source. -->
-  <div class="panel">
-    <div class="series-head">
-      <h2>👥 Compare With Another Profile</h2>
-      <select id="compareSelect"></select>
-    </div>
-    <p class="muted">What the two of you have both read, and what they rated highly that you have not picked up.</p>
-    <div class="compare-cols" id="compareCols"></div>
-    <div class="empty-msg" id="compareEmpty" style="display:none;">Add a second profile to compare libraries.</div>
-  </div>
-  <div class="panel">
-    <h2>✨ Recommended For You</h2>
-    <p class="muted">Based on your highest-rated genres/moods among finished books, matched against your TBR.</p>
-    <div class="grid-cards" id="recsCards"></div>
-    <div class="empty-msg" id="recsEmpty" style="display:none;">Rate a few finished books and tag genres/moods to unlock recommendations.</div>
-  </div>
-  <div class="panel">
-    <div class="series-head">
-      <h2>🎯 Reading Challenges</h2>
-      <button class="secondary small" id="addChallengeBtn">+ New Challenge</button>
-    </div>
-    <div id="challengesList"></div>
-    <div class="empty-msg" id="challengesEmpty" style="display:none;">No challenges yet — try a genre bingo or a decade challenge.</div>
-  </div>
-</div>
-
-<!-- AUDIOBOOKS VIEW: the same books as every other tab, filtered to format "audiobook",
-     with the two fields only audiobooks have — a running time and a minutes-per-day
-     listening log — edited straight from the card. -->
-<div class="view" id="view-audiobooks">
-  <div class="panel">
-    <div class="series-head" style="margin-bottom:12px;">
-      <h2 style="margin:0;">🎧 Audiobooks</h2>
-      <span class="muted" id="audioCount"></span>
-    </div>
-    <div class="stat-grid" id="audioStatGrid"></div>
-    <div class="filter-row" style="margin-top:16px;">
-      <input type="text" class="toolbar-search" id="audioSearch" placeholder="Search title or author...">
-      <select id="audioStatusFilter" aria-label="Filter by status">
-        <option value="">All statuses</option>
-        <option value="reading">Currently listening</option>
-        <option value="tbr">To Be Read</option>
-        <option value="read">Finished</option>
-        <option value="dnf">Did Not Finish</option>
-      </select>
-    </div>
-    <div class="grid-cards" id="audioCards"></div>
-    <div class="empty-msg" id="audioEmpty" style="display:none;">No audiobooks yet — set a book's Format to “Audiobook” when adding or editing it.</div>
-  </div>
-  <div class="panel">
-    <div class="chart-card" style="margin-bottom:0;">
-      <div class="chart-head">
-        <h3>Time Listened per Day (last 30 days)</h3>
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <select id="listenChartBook" aria-label="Which audiobook to chart"></select>
-          <button class="chart-toggle" data-chart-toggle="listen">View as table</button>
-        </div>
-      </div>
-      <div class="chart-body" id="listenChartWrap"></div>
-    </div>
-  </div>
-</div>
-
-<!-- LIBRARY VIEW: every book as a cover grid, with no badges or buttons — a browsing
-     view rather than a management one. -->
-<div class="view" id="view-library">
-  <div class="panel">
-    <div class="series-head">
-      <h2>📚 Library</h2>
-      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-        <span class="muted" id="libraryCount"></span>
-        <input type="text" id="librarySearch" placeholder="Search title or author..." aria-label="Search library">
-        <select id="librarySort">
-          <option value="title">Sort: Title A–Z</option>
-          <option value="author">Sort: Author A–Z</option>
-        </select>
-      </div>
-    </div>
-    <div class="library-grid" id="libraryGrid"></div>
-    <div class="empty-msg" id="libraryEmpty" style="display:none;">No books yet.</div>
   </div>
 </div>
 
@@ -1269,6 +1275,7 @@
     btn.classList.add("active");
     document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
     $("view-"+btn.dataset.view).classList.add("active");
+    if(btn.dataset.view === "logs") syncLogSubtabs();
     renderAll();
   });
 
@@ -2665,7 +2672,7 @@
       // An audiobook is measured in minutes, so its card offers the listening log in place
       // of the page log - the same controls the Audiobooks tab uses. Everything else about
       // the card is unchanged.
-      extra += audioFiguresHTML(book) + listenLogRowHTML(book) + listenLogSummaryHTML(book);
+      extra += logFiguresHTML(book, LOG_KINDS.audio) + logEntryRowHTML(book, LOG_KINDS.audio) + logSummaryHTML(book, LOG_KINDS.audio);
     } else if(book.status==="reading"){
       extra += `<div class="progress-bar"><div style="width:${book.progress||0}%"></div></div><div class="muted">${book.progress||0}% complete</div>`;
       // Daily page log. The date defaults to today but can be moved back to catch up on a
@@ -2767,7 +2774,7 @@
         const newBook = Object.assign({}, book, { id: uid(), isReread:true, status:"reading", progress:0, dateStarted: todayStr(), dateFinished:null, notes:"", quotes: (book.quotes||[]).slice(), readingLog: [], listenLog: [] });
         data.books.push(newBook);
         saveData(); renderAll();
-        toast("New reread started — track it in Currently Reading");
+        toast("New reread started — track it on the Logs tab");
       }
       return;
     }
@@ -2792,6 +2799,8 @@
     if(listenBtn){ addListenEntry(listenBtn.dataset.listenAdd, listenBtn.closest(".log-row")); return; }
     const audioLenBtn = e.target.closest("[data-audio-save]");
     if(audioLenBtn){ saveAudioLength(audioLenBtn.dataset.audioSave, audioLenBtn.closest(".log-row")); return; }
+    const pagesLenBtn = e.target.closest("[data-pages-save]");
+    if(pagesLenBtn){ savePageCount(pagesLenBtn.dataset.pagesSave, pagesLenBtn.closest(".log-row")); return; }
     const listenSave = e.target.closest("[data-listen-save]");
     if(listenSave){ saveListenEdit(listenSave.closest("li")); return; }
     const listenDel = e.target.closest("[data-listen-remove]");
@@ -2842,6 +2851,8 @@
     if(listenRow){ e.preventDefault(); addListenEntry(listenRow.dataset.listenRow, listenRow); return; }
     const lenRow = e.target.closest("[data-audio-len]");
     if(lenRow){ e.preventDefault(); saveAudioLength(lenRow.dataset.audioLen, lenRow); return; }
+    const pagesLenRow = e.target.closest("[data-pages-len]");
+    if(pagesLenRow){ e.preventDefault(); savePageCount(pagesLenRow.dataset.pagesLen, pagesLenRow); return; }
     const listenEditRow = e.target.closest("[data-listen-edit]");
     if(listenEditRow){ e.preventDefault(); saveListenEdit(listenEditRow.closest("li")); }
   });
@@ -2934,34 +2945,10 @@
     if(mEl) mEl.value = mins ? mins%60 : "";
   }
 
-  // Which audiobook the listening chart is showing; "" means all of them together.
-  let listenChartBookId = "";
+  // Which book each side's daily chart is showing; "" means all of them together.
+  const logChartBookId = { Audio: "", Pages: "" };
   function listenedMinutes(book){
     return (book.listenLog||[]).reduce((s,e)=>s+e.minutes,0);
-  }
-  function audiobooks(){ return data.books.filter(b=>b.format==="audiobook"); }
-  // Minutes a day since the first entry (today included), and the finish date that rate
-  // projects - the audio twin of the Currently Reading pace row. Null until something is
-  // logged, because a rate needs at least one day to divide by.
-  function listenPace(book){
-    const log = book.listenLog||[];
-    if(!log.length) return null;
-    const listened = listenedMinutes(book);
-    const perDay = listened / (daysBetween(log[0].date, todayStr()) + 1);
-    let finish = "";
-    if(book.status === "read") finish = "finished";
-    else if(!book.audioLength) finish = "";
-    else if(listened >= book.audioLength) finish = "any minute now";
-    else if(perDay > 0) finish = "est. finish " + formatYmd(daysAgoStr(-Math.ceil((book.audioLength - listened) / perDay)));
-    return { perDay, finish };
-  }
-  // Raising `progress` to match the listening log, on exactly the terms the page log uses:
-  // only ever forward, since someone who starts logging halfway through is further along
-  // than the log alone can show.
-  function syncAudioProgress(book){
-    if(!book.audioLength) return;
-    const pct = Math.min(100, Math.round(listenedMinutes(book) / book.audioLength * 100));
-    if(pct > (book.progress||0)) book.progress = pct;
   }
 
   // Adds one day's listening from a card's row. Several entries for a day add together,
@@ -2980,7 +2967,7 @@
     }
     if(!parseYmd(date) || date > todayStr()){ toast("Pick today or an earlier day"); return; }
     book.listenLog = normalizeListenLog((book.listenLog||[]).concat([{ date, minutes }]));
-    syncAudioProgress(book);
+    syncLogProgress(book, LOG_KINDS.audio);
     if(!book.dateStarted || date < book.dateStarted) book.dateStarted = date;
     saveData(); renderAll();
     toast(`Logged ${formatMinutes(minutes)} for “${book.title}”` + (date===todayStr() ? "" : " on " + formatYmd(date)));
@@ -3024,148 +3011,273 @@
     const next = minutes ? minutes : null;
     if(next === (book.audioLength||null)){ toast("No change"); return; }
     book.audioLength = next;
-    syncAudioProgress(book);
+    syncLogProgress(book, LOG_KINDS.audio);
     saveData(); renderAll();
     toast(next ? `Length set to ${formatMinutes(next)}` : "Length cleared");
   }
 
-  // The listening pieces of a card, shared by the Currently Reading card and the
-  // Audiobooks tab so the two cannot drift apart.
-  function audioFiguresHTML(book){
-    const total = book.audioLength, listened = listenedMinutes(book);
-    // With a running time the bar is the log's own percentage; without one it falls back
-    // to whatever progress was set by hand, which is then all there is to show.
-    const pct = total ? Math.min(100, Math.round(listened/total*100)) : (book.progress||0);
+
+  // The page count, saved from the card - the paged twin of saveAudioLength. Clearing the
+  // box (or zero) removes it, which is how a count entered by mistake is taken off again.
+  function savePageCount(id, row){
+    const book = data.books.find(b=>b.id===id);
+    if(!book || !row) return;
+    const input = row.querySelector("[data-pages-total]");
+    const raw = input ? input.value.trim() : "";
+    const pages = raw === "" ? null : parseInt(raw, 10);
+    if(pages !== null && !(pages >= 0 && pages <= 99999)){
+      toast("Enter a page count from 0 to 99,999");
+      if(input) input.focus();
+      return;
+    }
+    const next = pages ? pages : null;
+    if(next === (book.pages||null)){ toast("No change"); return; }
+    book.pages = next;
+    syncLogProgress(book, LOG_KINDS.pages);
+    saveData(); renderAll();
+    toast(next ? `Page count set to ${next.toLocaleString()}` : "Page count cleared");
+  }
+
+  // ---------- THE TWO LOGS ----------
+  // The Logs tab tracks the same thing twice over: an audiobook against its running time
+  // in minutes, everything else against its page count in pages. Rather than write the
+  // cards, tiles and chart once per unit and watch the two drift apart, everything that
+  // actually differs between them is gathered here, and the code below is written once
+  // against this description.
+  const LOG_KINDS = {
+    audio: {
+      id: "Audio",                                  // ids on the page are log<Id><Thing>
+      belongs: b => b.format === "audiobook",
+      entries: b => b.listenLog || [],
+      total: b => b.audioLength,
+      // fmt is a quantity on its own; bare is the same number where the unit is already
+      // established, e.g. the right-hand side of "2h 30m of 10h".
+      fmt: n => formatMinutes(n),
+      bare: n => formatMinutes(n),
+      noun: "audiobook",
+      totalLabel: "Length", logLabel: "Listened", logBtn: "Log time",
+      doneSoon: "any minute now",
+      needTotal: "add a length to see what is left",
+      needTotalForPct: "add a length to track it by time",
+      nothingYet: "No length or listening time recorded yet.",
+      tileLabels: ["In Progress", "Total Length", "Time Listened", "Time Remaining", "Time / Day (last 7 days)"],
+      chartCol: "Time listened",
+      chartEmpty: "No listening time logged in the last 30 days",
+      axisMax: v => niceTimeMax(v),
+      axisLabel: v => formatMinutes(v)
+    },
+    pages: {
+      id: "Pages",
+      belongs: b => b.format !== "audiobook",
+      entries: b => b.readingLog || [],
+      total: b => b.pages,
+      fmt: n => Math.round(n).toLocaleString() + (Math.round(n) === 1 ? " page" : " pages"),
+      bare: n => Math.round(n).toLocaleString(),
+      noun: "book",
+      totalLabel: "Pages", logLabel: "Read", logBtn: "Log pages",
+      doneSoon: "any page now",
+      needTotal: "add a page count to see what is left",
+      needTotalForPct: "add a page count to track it by pages",
+      nothingYet: "No page count or pages logged yet.",
+      tileLabels: ["In Progress", "Total Pages", "Pages Read", "Pages Remaining", "Pages / Day (last 7 days)"],
+      chartCol: "Pages logged",
+      chartEmpty: "No pages logged in the last 30 days",
+      axisMax: v => niceMax(v),
+      axisLabel: v => Math.round(v).toLocaleString()
+    }
+  };
+  // An entry is {date, minutes} on one side and {date, pages} on the other; this is the
+  // only place that difference is spelled out.
+  function logAmount(kind, entry){ return kind === LOG_KINDS.audio ? entry.minutes : entry.pages; }
+  function logDone(book, kind){ return kind.entries(book).reduce((sum,e)=>sum+logAmount(kind,e), 0); }
+  function logBooks(kind){ return data.books.filter(kind.belongs); }
+  // The Logs tab is only about what is being read right now. A finished or abandoned book
+  // keeps its log - it is still on the chart below, in the Pacing figures, and editable
+  // from the book's detail view - but it is not something left to track, so it does not
+  // take up a card here.
+  function logInProgress(kind){ return logBooks(kind).filter(b=>b.status === "reading"); }
+  function el(kind, thing){ return $("log" + kind.id + thing); }
+
+  // Amount per day since the first entry (today included), and the finish date that rate
+  // projects. Null until something is logged, because a rate needs a day to divide by.
+  function logPace(book, kind){
+    const entries = kind.entries(book);
+    if(!entries.length) return null;
+    const done = logDone(book, kind), total = kind.total(book);
+    const perDay = done / (daysBetween(entries[0].date, todayStr()) + 1);
+    let finish = "";
+    if(book.status === "read") finish = "finished";
+    else if(!total) finish = "";
+    else if(done >= total) finish = kind.doneSoon;
+    else if(perDay > 0) finish = "est. finish " + formatYmd(daysAgoStr(-Math.ceil((total - done) / perDay)));
+    return { perDay, finish };
+  }
+  // Raising `progress` to match the log, on the terms both logs have always used: only
+  // ever forward, since someone who starts logging partway through is further along than
+  // the log alone can show.
+  function syncLogProgress(book, kind){
+    const total = kind.total(book);
+    if(!total) return;
+    const pct = Math.min(100, Math.round(logDone(book, kind) / total * 100));
+    if(pct > (book.progress||0)) book.progress = pct;
+  }
+
+  // The progress bar and the "X of Y, Z left" line, shared by the Logs card and by the
+  // Currently-Reading-style card that bookCardHTML still builds elsewhere.
+  function logFiguresHTML(book, kind){
+    const total = kind.total(book), logged = logDone(book, kind);
+    // The slider only speaks in percentages, so it can only be turned back into an amount
+    // when there is a total to take a percentage of. Where it can, the higher of the two
+    // wins: a slider moved by hand is evidence of progress the log never saw.
+    const done = (total && book.status === "read")
+      ? total
+      : (total ? Math.min(total, Math.max(logged, Math.round((book.progress||0)/100*total))) : logged);
+    const pct = total ? Math.min(100, Math.round(done/total*100)) : (book.status === "read" ? 100 : (book.progress||0));
     let line;
     if(total){
-      line = `<strong>${esc(formatMinutes(Math.min(listened,total)))}</strong> of ${esc(formatMinutes(total))} · <strong>${esc(formatMinutes(Math.max(0, total-listened)))}</strong> remaining · ${pct}%`;
-    } else if(listened){
-      line = `<strong>${esc(formatMinutes(listened))}</strong> listened · add a length to see what is left`;
+      line = `<strong>${esc(kind.fmt(Math.min(done,total)))}</strong> of ${esc(kind.bare(total))} · <strong>${esc(kind.fmt(Math.max(0, total-done)))}</strong> remaining · ${pct}%`;
+    } else if(done){
+      line = `<strong>${esc(kind.fmt(done))}</strong> logged · ${esc(kind.needTotal)}`;
     } else if(pct){
       // Nothing logged, but the slider has been moved, so the bar above is not a lie.
-      line = `${pct}% complete · add a length to track it by time`;
+      line = `${pct}% complete · ${esc(kind.needTotalForPct)}`;
     } else {
-      line = "No length or listening time recorded yet.";
+      line = esc(kind.nothingYet);
     }
     return `<div class="progress-bar"><div style="width:${pct}%"></div></div><div class="audio-line">${line}</div>`;
   }
-  function listenLogRowHTML(book){
-    const today = todayStr();
-    return `<div class="log-row listen-row" data-listen-row="${esc(book.id)}">
-      <span class="hm-unit">Listened</span>
-      ${hmInputsHTML(null, "Time listened")}
-      <input type="date" value="${today}" max="${today}" aria-label="Day listened" data-listen-date="${esc(book.id)}">
-      <button class="small secondary" data-listen-add="${esc(book.id)}">Log time</button>
-    </div>`;
+  // The two editable rows. Their inner controls are the one thing that cannot be shared:
+  // a time needs an hours and a minutes box, a page count needs one number box. Both rows
+  // carry the data-* attributes the existing click and keydown handlers already look for.
+  function logTotalRowHTML(book, kind){
+    const inner = kind === LOG_KINDS.audio
+      ? `${hmInputsHTML(book.audioLength, "Audiobook length")}<button class="small secondary" data-audio-save="${esc(book.id)}">Save</button>`
+      : `<input type="number" min="0" max="99999" placeholder="pages" value="${book.pages || ""}" data-pages-total aria-label="Page count"><button class="small secondary" data-pages-save="${esc(book.id)}">Save</button>`;
+    const rowAttr = kind === LOG_KINDS.audio ? `data-audio-len="${esc(book.id)}"` : `data-pages-len="${esc(book.id)}"`;
+    return `<div class="log-row" ${rowAttr}><span class="hm-unit">${esc(kind.totalLabel)}</span>${inner}</div>`;
   }
-  function listenLogSummaryHTML(book){
-    const days = (book.listenLog||[]).length;
+  function logEntryRowHTML(book, kind){
+    const today = todayStr();
+    const isAudio = kind === LOG_KINDS.audio;
+    const inner = isAudio
+      ? `${hmInputsHTML(null, "Time listened")}<input type="date" value="${today}" max="${today}" aria-label="Day listened" data-listen-date="${esc(book.id)}"><button class="small secondary" data-listen-add="${esc(book.id)}">${esc(kind.logBtn)}</button>`
+      : `<input type="number" min="1" max="${READING_LOG_MAX}" placeholder="pages" aria-label="Pages read" data-log-pages="${esc(book.id)}"><input type="date" value="${today}" max="${today}" aria-label="Day read" data-log-date="${esc(book.id)}"><button class="small secondary" data-log-add="${esc(book.id)}">${esc(kind.logBtn)}</button>`;
+    const rowClass = isAudio ? "log-row listen-row" : "log-row";
+    const rowAttr = isAudio ? `data-listen-row="${esc(book.id)}"` : "";
+    return `<div class="${rowClass}" ${rowAttr}><span class="hm-unit">${esc(kind.logLabel)}</span>${inner}</div>`;
+  }
+  function logSummaryHTML(book, kind){
+    const days = kind.entries(book).length;
     if(!days) return "";
     const today = todayStr();
-    const listenedToday = (book.listenLog||[]).filter(e=>e.date===today).reduce((s,e)=>s+e.minutes,0);
-    return `<div class="audio-line">Today: ${esc(formatMinutes(listenedToday))} · ${days} day${days===1?"":"s"} logged · <button type="button" class="title-link log-edit-link" data-detail-id="${esc(book.id)}">Edit log</button></div>`;
+    const todayTotal = kind.entries(book).filter(e=>e.date===today).reduce((sum,e)=>sum+logAmount(kind,e), 0);
+    return `<div class="audio-line">Today: ${esc(kind.fmt(todayTotal))} · ${days} day${days===1?"":"s"} logged · <button type="button" class="title-link log-edit-link" data-detail-id="${esc(book.id)}">Edit log</button></div>`;
   }
 
-  // ---------- RENDER: AUDIOBOOKS ----------
-  // One card per audiobook, carrying both of the tab's editable fields: the running time
-  // and today's listening. Unlike bookCardHTML this is not status-shaped - an audiobook is
-  // shown the same way whether it is waiting, in progress or finished, with the numbers
-  // filling in as they become known.
-  const AUDIO_STATUS_ORDER = { reading:0, tbr:1, read:2, dnf:3 };
-  function audiobookCardHTML(book){
-    let badges = `<span class="badge">${esc(book.status==="reading" ? "Listening" : STATUS_LABELS[book.status])}</span>`;
+  // ---------- RENDER: LOGS ----------
+  // One card per book on this side of the Logs tab, carrying both editable fields: the
+  // total it is measured against, and today's reading or listening. Unlike bookCardHTML
+  // this is not status-shaped - a book is shown the same way whether it is waiting, in
+  // progress or finished, with the numbers filling in as they become known.
+  function logCardHTML(book, kind){
+    // Every card here is a book in progress, so there is no status to badge and no
+    // "start" or "reread" action to offer - only the two ways out of the tab.
+    let badges = "";
     if(book.series && book.series.name) badges += `<span class="badge">${esc(book.series.name)}${book.series.num!=null?" #"+book.series.num:""}</span>`;
+    if(kind === LOG_KINDS.pages) badges += `<span class="badge">${esc(book.format||"physical")}</span>`;
     if(book.owned === false) badges += `<span class="badge wishlist">Wishlist</span>`;
     if(book.isReread) badges += `<span class="badge">Reread</span>`;
     (book.tags||[]).forEach(t=>badges+=`<span class="badge">${esc(t)}</span>`);
 
-    // Running time, editable in place, so a length can be filled in without opening the
-    // Edit dialog. The same two boxes that dialog uses.
-    const lengthRow = `<div class="log-row" data-audio-len="${esc(book.id)}">
-      <span class="hm-unit">Length</span>
-      ${hmInputsHTML(book.audioLength, "Audiobook length")}
-      <button class="small secondary" data-audio-save="${esc(book.id)}">Save</button>
-    </div>`;
-
-    let figures = audioFiguresHTML(book);
-    const pace = listenPace(book);
-    if(pace) figures += `<div class="audio-line">${esc(formatMinutes(pace.perDay))} a day${pace.finish ? " · " + esc(pace.finish) : ""}</div>`;
-
-    const logRow = listenLogRowHTML(book);
-    const logLine = listenLogSummaryHTML(book);
+    let figures = logFiguresHTML(book, kind);
+    const pace = logPace(book, kind);
+    if(pace) figures += `<div class="audio-line">${esc(kind.fmt(pace.perDay))} a day${pace.finish ? " · " + esc(pace.finish) : ""}</div>`;
 
     let actions = `<button class="small secondary" data-action="edit" data-id="${esc(book.id)}">Edit</button>`;
-    if(book.status==="tbr") actions += `<button class="small" data-action="start-reading" data-id="${esc(book.id)}">Start Listening</button>`;
-    if(book.status==="reading"){
-      actions += `<button class="small" data-action="finish-reading" data-id="${esc(book.id)}">Mark Finished</button>`;
-      actions += `<button class="small secondary" data-action="dnf-reading" data-id="${esc(book.id)}">DNF</button>`;
-    }
+    actions += `<button class="small" data-action="finish-reading" data-id="${esc(book.id)}">Mark Finished</button>`;
+    actions += `<button class="small secondary" data-action="dnf-reading" data-id="${esc(book.id)}">DNF</button>`;
+    if(store.profiles.length > 1) actions += `<button class="small secondary" data-send-id="${esc(book.id)}">Send to…</button>`;
 
     return `<div class="book-card" data-id="${esc(book.id)}">
       <span class="detail-link" data-detail-id="${esc(book.id)}" title="View details">${coverImg(book,"cover")}</span>
       <div class="book-info">
         <button type="button" class="book-title title-link" data-detail-id="${esc(book.id)}">${esc(book.title)}</button>
         <div class="book-author">${esc(book.author||"Unknown author")}</div>
-        <div class="badge-row">${badges}</div>
-        ${lengthRow}
+        ${badges ? `<div class="badge-row">${badges}</div>` : ""}
+        ${logTotalRowHTML(book, kind)}
         ${figures}
-        ${logRow}
-        ${logLine}
+        ${logEntryRowHTML(book, kind)}
+        ${logSummaryHTML(book, kind)}
         <div class="card-actions">${actions}</div>
       </div>
     </div>`;
   }
 
-  function renderAudiobooks(){
-    const search = $("audioSearch").value;
-    const status = $("audioStatusFilter").value;
-    const all = audiobooks();
-    const books = all
-      .filter(b=>(!status || b.status===status) && matchesSearch(b, search))
-      // What is being listened to now comes first; the rest follow their status, then title.
-      .sort((a,b)=>(AUDIO_STATUS_ORDER[a.status]-AUDIO_STATUS_ORDER[b.status]) || a.title.localeCompare(b.title));
+  function renderLogSection(kind){
+    const search = el(kind, "Search").value;
+    const inProgress = logInProgress(kind);
+    const books = inProgress.filter(b=>matchesSearch(b, search)).sort((a,b)=>a.title.localeCompare(b.title));
 
-    // The tiles sum the whole audiobook collection, not the filtered list - they describe
-    // the shelf, and would be confusing if a search changed them.
-    if(all.length){
-      const totalLen = all.reduce((s,b)=>s+(b.audioLength||0),0);
-      const totalListened = all.reduce((s,b)=>s+listenedMinutes(b),0);
-      const remaining = all.reduce((s,b)=>s + (b.audioLength ? Math.max(0, b.audioLength - listenedMinutes(b)) : 0), 0);
-      const byDate = listenTotalsByDate(all);
+    // The tiles sum everything in progress, not the filtered list - they answer "how much
+    // have I got on", and would be confusing if a search changed them.
+    if(inProgress.length){
+      const totalAll = inProgress.reduce((sum,b)=>sum+(kind.total(b)||0), 0);
+      const doneAll = inProgress.reduce((sum,b)=>sum+logDone(b, kind), 0);
+      const leftAll = inProgress.reduce((sum,b)=>{ const t = kind.total(b); return sum + (t ? Math.max(0, t - logDone(b, kind)) : 0); }, 0);
+      const byDate = logTotalsByDate(inProgress, kind);
       let last7 = 0;
       for(let i=0;i<7;i++) last7 += byDate[daysAgoStr(i)]||0;
-      const noLength = all.filter(b=>!b.audioLength).length;
-      const tiles = [
-        {num: all.length, label:"Audiobooks"},
-        {num: formatMinutes(totalLen), label: noLength ? `Total Length · ${noLength} without one` : "Total Length"},
-        {num: formatMinutes(totalListened), label:"Time Listened"},
-        {num: formatMinutes(remaining), label:"Time Remaining"},
-        {num: formatMinutes(last7/7), label:"Time / Day (last 7 days)"}
-      ];
-      $("audioStatGrid").innerHTML = tiles.map(t=>`<div class="stat-tile"><div class="num">${esc(t.num)}</div><div class="label">${esc(t.label)}</div></div>`).join("");
+      const noTotal = inProgress.filter(b=>!kind.total(b)).length;
+      const nums = [inProgress.length, kind.bare(totalAll), kind.bare(doneAll), kind.bare(leftAll), kind.bare(last7/7)];
+      el(kind, "StatGrid").innerHTML = nums.map((num, i)=>{
+        const label = (i === 1 && noTotal) ? kind.tileLabels[i] + " · " + noTotal + " without one" : kind.tileLabels[i];
+        return `<div class="stat-tile"><div class="num">${esc(num)}</div><div class="label">${esc(label)}</div></div>`;
+      }).join("");
     } else {
-      $("audioStatGrid").innerHTML = "";
+      el(kind, "StatGrid").innerHTML = "";
     }
-    $("audioCount").textContent = all.length
-      ? (books.length === all.length ? `${all.length} audiobook${all.length===1?"":"s"}` : `${books.length} of ${all.length} audiobooks`)
+    el(kind, "Count").textContent = inProgress.length
+      ? (books.length === inProgress.length ? `${inProgress.length} in progress` : `${books.length} of ${inProgress.length} in progress`)
       : "";
 
-    $("audioCards").innerHTML = books.map(audiobookCardHTML).join("");
-    showEmpty("audioEmpty", !books.length, search || status);
+    el(kind, "Cards").innerHTML = books.map(b=>logCardHTML(b, kind)).join("");
+    showEmpty("log" + kind.id + "Empty", !books.length, search);
 
-    // The chart's book picker is rebuilt here so it follows books in and out of the
-    // collection; a choice that is no longer an audiobook falls back to "All".
-    const sel = $("listenChartBook");
-    if(!all.some(b=>b.id===listenChartBookId)) listenChartBookId = "";
-    sel.innerHTML = `<option value="">All audiobooks</option>`
-      + all.map(b=>`<option value="${esc(b.id)}">${esc(b.title)}</option>`).join("");
-    sel.value = listenChartBookId;
+    // The chart below covers every book of this kind, finished ones included - a day's
+    // reading does not stop having happened - so its picker lists them all too. A choice
+    // that no longer belongs to this side falls back to "All".
+    const all = logBooks(kind);
+    const sel = el(kind, "ChartBook");
+    if(!all.some(b=>b.id===logChartBookId[kind.id])) logChartBookId[kind.id] = "";
+    sel.innerHTML = `<option value="">All ${esc(kind.noun)}s</option>`
+      + all.slice().sort((a,b)=>a.title.localeCompare(b.title)).map(b=>`<option value="${esc(b.id)}">${esc(b.title)}</option>`).join("");
+    sel.value = logChartBookId[kind.id];
   }
-  $("audioSearch").addEventListener("input", renderAudiobooks);
-  $("audioStatusFilter").addEventListener("change", renderAudiobooks);
-  $("listenChartBook").addEventListener("change", (e)=>{
-    listenChartBookId = e.target.value;
-    renderListenChart();
+  function renderLogs(){
+    renderLogSection(LOG_KINDS.audio);
+    renderLogSection(LOG_KINDS.pages);
+    renderDailyLogChart(LOG_KINDS.audio);
+    renderDailyLogChart(LOG_KINDS.pages);
+  }
+
+  // Sub-tab switching inside the Logs tab: the same one-listener pattern the tab bar uses.
+  let activeLogKind = "audio";
+  $("logsSubtabs").addEventListener("click", (e)=>{
+    const btn = e.target.closest(".subtab-btn");
+    if(!btn) return;
+    activeLogKind = btn.dataset.logKind;
+    syncLogSubtabs();
+  });
+  function syncLogSubtabs(){
+    document.querySelectorAll("#logsSubtabs .subtab-btn").forEach(b=>b.classList.toggle("active", b.dataset.logKind === activeLogKind));
+    document.querySelectorAll("#view-logs .log-panel").forEach(pnl=>pnl.classList.toggle("active", pnl.dataset.logKind === activeLogKind));
+  }
+  [LOG_KINDS.audio, LOG_KINDS.pages].forEach(kind=>{
+    el(kind, "Search").addEventListener("input", ()=>renderLogSection(kind));
+    el(kind, "ChartBook").addEventListener("change", (e)=>{
+      logChartBookId[kind.id] = e.target.value;
+      renderDailyLogChart(kind);
+    });
   });
 
   // ---------- BOOK DETAIL (read-only) ----------
@@ -3436,12 +3548,6 @@
   // The result is drawn right here on the TBR tab; the Discovery panel is not visible from it.
   $("pickForMeFromTbrBtn").addEventListener("click", ()=>pickForMe("tbrPickResult"));
 
-  // ---------- RENDER: READING ----------
-  function renderReading(){
-    const search = $("readingSearch").value;
-    renderCardList("readingCards", "readingEmpty", data.books.filter(b=>b.status==="reading" && matchesSearch(b, search)), search);
-  }
-  $("readingSearch").addEventListener("input", renderReading);
 
   // ---------- RENDER: READ ----------
   // The Read tab supports search, a sort dropdown and a "rereads only" filter. The sort
@@ -3642,6 +3748,8 @@
   }
   function daysBetween(a, b){ return Math.round((parseYmd(b) - parseYmd(a)) / 86400000); }
   // Pages logged per day across every book in the library, finished ones included.
+  // Pages only: the Pacing tiles it feeds are all labelled in pages, and an audiobook is
+  // counted in minutes on the Logs tab instead.
   function dailyLogTotals(){
     const byDate = {};
     data.books.forEach(b=>(b.readingLog||[]).forEach(e=>{ byDate[e.date] = (byDate[e.date]||0) + e.pages; }));
@@ -3660,10 +3768,11 @@
     while(byDate[daysAgoStr(i)]){ streak++; i++; }
     return { today: byDate[daysAgoStr(0)]||0, avg7: sumLast(7)/7, avg30: sumLast(30)/30, streak };
   }
-  // One row per Currently Reading book. Pace is pages logged divided by the days since the
-  // first entry (today included), so days off slow it down just as they do in real life.
-  // Pages done takes the higher of the log and the progress slider, and the finish date
-  // projects the remaining pages at that pace.
+  // One row per book in progress, whichever unit it is counted in. Pace is the amount
+  // logged divided by the days since the first entry (today included), so days off slow it
+  // down just as they do in real life; the finish date projects what is left at that pace.
+  // A paged book's "done" takes the higher of the log and the progress slider, since a
+  // slider moved by hand knows about reading that was never logged.
   function renderReadingPace(){
     const wrap = $("readingPaceWrap");
     const reading = data.books.filter(b=>b.status==="reading");
@@ -3671,43 +3780,29 @@
       wrap.innerHTML = `<div class="chart-empty">Nothing in progress. Start a book to track its pace here.</div>`;
       return;
     }
-    const today = todayStr();
+    const kindOf = b => b.format === "audiobook" ? LOG_KINDS.audio : LOG_KINDS.pages;
     const rows = reading.map(b=>{
-      // An audiobook has no pages to count, so its row is the same three figures measured
-      // in time instead. The h/m in its cells is what tells the two kinds of row apart.
-      if(b.format === "audiobook"){
-        const listened = listenedMinutes(b);
-        const pace = listenPace(b);
-        let finish = "—";
-        if(b.audioLength && listened >= b.audioLength) finish = "Any minute now";
-        else if(b.audioLength && pace && pace.perDay > 0) finish = formatYmd(daysAgoStr(-Math.ceil((b.audioLength - listened) / pace.perDay)));
-        return `<tr>
-          <td>${esc(b.title)}</td>
-          <td class="num-col">${b.audioLength ? esc(formatMinutes(Math.min(listened, b.audioLength)) + " / " + formatMinutes(b.audioLength)) : (listened ? esc(formatMinutes(listened)) : "—")}</td>
-          <td class="num-col">${pace ? esc(formatMinutes(pace.perDay)) : "—"}</td>
-          <td class="num-col">${esc(finish)}</td>
-        </tr>`;
-      }
-      const logged = loggedPages(b);
-      const log = b.readingLog||[];
-      const rate = log.length ? logged / (daysBetween(log[0].date, today) + 1) : 0;
-      const done = b.pages ? Math.min(b.pages, Math.max(logged, Math.round((b.progress||0)/100*b.pages))) : logged;
+      const kind = kindOf(b);
+      const total = kind.total(b), logged = logDone(b, kind);
+      // The slider only speaks in percentages, so it can only be turned back into an
+      // amount when there is a total to take a percentage of.
+      const done = total ? Math.min(total, Math.max(logged, Math.round((b.progress||0)/100*total))) : logged;
+      const pace = logPace(b, kind);
+      const rate = pace ? pace.perDay : 0;
       let finish = "—";
-      if(b.pages && done >= b.pages) finish = "Any page now";
-      else if(b.pages && rate > 0) finish = formatYmd(daysAgoStr(-Math.ceil((b.pages - done) / rate)));
+      if(total && done >= total) finish = kind === LOG_KINDS.audio ? "Any minute now" : "Any page now";
+      else if(total && rate > 0) finish = formatYmd(daysAgoStr(-Math.ceil((total - done) / rate)));
       return `<tr>
         <td>${esc(b.title)}</td>
-        <td class="num-col">${b.pages ? `${done.toLocaleString()} / ${b.pages.toLocaleString()}` : (done ? done.toLocaleString() : "—")}</td>
-        <td class="num-col">${rate ? rate.toFixed(1) : "—"}</td>
+        <td class="num-col">${total ? esc(kind.bare(done) + " / " + kind.bare(total)) : (done ? esc(kind.bare(done)) : "—")}</td>
+        <td class="num-col">${rate ? esc(kind.fmt(rate)) : "—"}</td>
         <td class="num-col">${esc(finish)}</td>
       </tr>`;
     }).join("");
     // Both hints ask about whichever measure each book is counted in.
-    const hasLog = b => b.format === "audiobook" ? (b.listenLog||[]).length : (b.readingLog||[]).length;
-    const hasTotal = b => b.format === "audiobook" ? b.audioLength : b.pages;
     const hints = [];
-    if(!reading.some(hasLog)) hints.push("Log the pages you read, or the time you listen, each day from a book's card in Currently Reading to see its pace and finish date.");
-    else if(reading.some(b=>!hasTotal(b))) hints.push("Add a page count, or an audiobook length, to a book to get its finish date.");
+    if(!reading.some(b=>kindOf(b).entries(b).length)) hints.push("Log the pages you read, or the time you listen, each day from a book's card on the Logs tab to see its pace and finish date.");
+    else if(reading.some(b=>!kindOf(b).total(b))) hints.push("Add a page count, or an audiobook length, to a book to get its finish date.");
     wrap.innerHTML = `<div class="chart-scroll"><table class="chart-table"><thead><tr><th>Book</th><th class="num-col">Read / listened</th><th class="num-col">Per day</th><th class="num-col">Est. finish</th></tr></thead><tbody>${rows}</tbody></table></div>`
       + hints.map(h=>`<p class="muted" style="margin-bottom:0;">${esc(h)}</p>`).join("");
   }
@@ -3744,7 +3839,7 @@
   // ---------- CHARTS ----------
   // Every chart here reads from "read" books only (first reads, not rereads) — see the
   // note above the panels. Each chart has a table-view twin toggled via chartViewMode.
-  const chartViewMode = { fiction:"chart", pagerange:"chart", genre:"chart", monthly:"chart", daily:"chart", listen:"chart" };
+  const chartViewMode = { fiction:"chart", pagerange:"chart", genre:"chart", monthly:"chart", logAudio:"chart", logPages:"chart" };
 
   function chartsReadBooks(){
     return data.books.filter(b=>b.status==="read" && !b.isReread);
@@ -3757,7 +3852,11 @@
     const key = t.dataset.chartToggle;
     chartViewMode[key] = chartViewMode[key]==="chart" ? "table" : "chart";
     t.textContent = chartViewMode[key]==="chart" ? "View as table" : "View as chart";
-    renderCharts();
+    // The two daily charts live on the Logs tab and redraw on their own; the rest are the
+    // library-shape charts on Rankings, which redraw together.
+    if(key === "logAudio") renderDailyLogChart(LOG_KINDS.audio);
+    else if(key === "logPages") renderDailyLogChart(LOG_KINDS.pages);
+    else renderCharts();
   });
 
   // Shared hover tooltip for every chart (delegated so it works for both HTML and SVG marks).
@@ -3788,9 +3887,6 @@
     renderPageRangeChart();
     renderGenreChart();
     renderMonthlyPagesChart();
-    renderReadingPace();
-    renderDailyPagesChart();
-    renderListenChart();
   }
 
   // ---- 1. Fiction vs Nonfiction (segmented bar — a 2-slice pie reads as one number, so this reads as a %) ----
@@ -4031,133 +4127,74 @@
       </svg></div>`;
   }
 
-  // ---- 5. Pages logged per day (bars, last 30 days, from the daily page log) ----
-  // Unlike the charts above this counts pages as they are read, not when a book is
-  // finished, so it includes books still in progress and ones later dropped.
-  function renderDailyPagesChart(){
-    const wrap = $("dailyPagesChartWrap");
-    const byDate = dailyLogTotals();
-    const series = [];
-    for(let i=29; i>=0; i--){ const key = daysAgoStr(i); series.push({ key, pages: byDate[key]||0 }); }
-    if(!series.some(p=>p.pages)){
-      wrap.innerHTML = `<div class="chart-empty">No pages logged in the last 30 days. Log them from a book's card in Currently Reading.</div>`;
-      return;
-    }
-    const dayLabel = key => parseYmd(key).toLocaleDateString(undefined, { month:"short", day:"numeric" });
-
-    if(chartViewMode.daily==="table"){
-      const rows = series.filter(p=>p.pages).reverse();
-      wrap.innerHTML = `<table class="chart-table"><thead><tr><th>Day</th><th class="num-col">Pages logged</th></tr></thead><tbody>
-        ${rows.map(p=>`<tr><td>${esc(formatYmd(p.key))}</td><td class="num-col">${p.pages.toLocaleString()}</td></tr>`).join("")}
-      </tbody></table>`;
-      return;
-    }
-
-    const yMax = niceMax(Math.max(...series.map(p=>p.pages), 1));
-    const barW = 14, gap = 2, stepX = barW + gap;
-    const leftPad = 46, rightPad = 12, topPad = 14, bottomPad = 28, plotH = 140;
-    const width = leftPad + series.length*stepX + rightPad;
-    const height = plotH + topPad + bottomPad;
-    const baseY = topPad + plotH;
-    const yAt = v => topPad + plotH - (v/yMax)*plotH;
-
-    const yTicks = [0, yMax*0.25, yMax*0.5, yMax*0.75, yMax];
-    const gridSvg = yTicks.map(t=>`<line class="grid-line" x1="${leftPad}" x2="${width-rightPad}" y1="${yAt(t)}" y2="${yAt(t)}"></line><text x="${leftPad-8}" y="${yAt(t)+4}" text-anchor="end">${Math.round(t).toLocaleString()}</text>`).join("");
-
-    // Each bar is a path so only its top corners are rounded and the bottom sits flat on
-    // the baseline. The radius shrinks for very short bars so the shape never inverts.
-    // The hover target is the whole column, so even a zero day or a sliver bar is easy to hit.
-    let bars = "", hits = "", xLabels = "";
-    series.forEach((p,i)=>{
-      const x = leftPad + i*stepX + gap/2;
-      const tip = `${dayLabel(p.key)}: ${p.pages.toLocaleString()} page${p.pages===1?"":"s"}`;
-      if(p.pages){
-        const y = yAt(p.pages), r = Math.min(4, (baseY - y)/2, barW/2);
-        bars += `<path d="M${x},${baseY} V${y+r} Q${x},${y} ${x+r},${y} H${x+barW-r} Q${x+barW},${y} ${x+barW},${y+r} V${baseY} Z" fill="var(--series-1)"></path>`;
-      }
-      hits += `<rect x="${x-gap/2}" y="${topPad}" width="${stepX}" height="${plotH}" fill="transparent" data-tip="${esc(tip)}"></rect>`;
-      if(i % 7 === 1 || i === series.length-1){
-        xLabels += `<text x="${x+barW/2}" y="${height-8}" text-anchor="middle">${i === series.length-1 ? "Today" : esc(dayLabel(p.key))}</text>`;
-      }
-    });
-
-    wrap.innerHTML = `<div class="chart-scroll"><svg class="chart-svg" viewBox="0 0 ${width} ${height}" style="width:${width}px; height:${height}px; min-width:100%;">
-        ${gridSvg}
-        ${bars}
-        <line class="axis-line" x1="${leftPad}" x2="${width-rightPad}" y1="${baseY}" y2="${baseY}"></line>
-        ${xLabels}
-        ${hits}
-      </svg></div>`;
-  }
-
-
-  // ---- 6. Time listened per day (line, last 30 days, from the listening log) ----
-  // The audio twin of the pages-per-day chart, drawn as a line because a time series with
-  // a running time behind it reads as a trend rather than as thirty separate totals.
-  // It charts every audiobook together, or one on its own when the picker names one.
-  function listenTotalsByDate(books){
+  // ---- 5. Logged per day (line, last 30 days, one per side of the Logs tab) ----
+  // Unlike the library-shape charts above, this counts as things are read or listened to,
+  // not when a book is finished, so it includes books still in progress and ones later
+  // dropped. A line rather than bars, because a daily total against a known finish line
+  // reads as a trend rather than as thirty separate figures.
+  function logTotalsByDate(books, kind){
     const byDate = {};
-    books.forEach(b=>(b.listenLog||[]).forEach(e=>{ byDate[e.date] = (byDate[e.date]||0) + e.minutes; }));
+    books.forEach(b=>kind.entries(b).forEach(e=>{ byDate[e.date] = (byDate[e.date]||0) + logAmount(kind, e); }));
     return byDate;
   }
-  // A y-axis top that divides into four clean times, so the ticks read "30m", "1h",
+  // A y-axis top that divides into four clean times, so a time axis reads "30m", "1h",
   // "1h 30m" rather than whatever a round number of minutes happens to give.
   function niceTimeMax(v){
     const steps = [5,10,15,20,30,45,60,90,120,180,240,360,480,720];
     for(const step of steps){ if(step*4 >= v) return step*4; }
     return Math.ceil(v/240)*240;
   }
-  function renderListenChart(){
-    const wrap = $("listenChartWrap");
-    const all = audiobooks();
-    const chosen = listenChartBookId ? all.filter(b=>b.id===listenChartBookId) : all;
-    const byDate = listenTotalsByDate(chosen);
+  function renderDailyLogChart(kind){
+    const wrap = el(kind, "ChartWrap");
+    const all = logBooks(kind);
+    const pickedId = logChartBookId[kind.id];
+    const chosen = pickedId ? all.filter(b=>b.id===pickedId) : all;
+    const byDate = logTotalsByDate(chosen, kind);
     const series = [];
-    for(let i=29; i>=0; i--){ const key = daysAgoStr(i); series.push({ key, minutes: byDate[key]||0 }); }
-    if(!series.some(p=>p.minutes)){
-      wrap.innerHTML = `<div class="chart-empty">No listening time logged in the last 30 days${listenChartBookId ? " for this audiobook" : ""}. Log it from a card above.</div>`;
+    for(let i=29; i>=0; i--){ const key = daysAgoStr(i); series.push({ key, value: byDate[key]||0 }); }
+    if(!series.some(pt=>pt.value)){
+      wrap.innerHTML = `<div class="chart-empty">${esc(kind.chartEmpty)}${pickedId ? " for this " + esc(kind.noun) : ""}. Log it from a card above while the book is in progress.</div>`;
       return;
     }
     const dayLabel = key => parseYmd(key).toLocaleDateString(undefined, { month:"short", day:"numeric" });
 
-    if(chartViewMode.listen==="table"){
-      const rows = series.filter(p=>p.minutes).reverse();
-      wrap.innerHTML = `<table class="chart-table"><thead><tr><th>Day</th><th class="num-col">Time listened</th></tr></thead><tbody>
-        ${rows.map(p=>`<tr><td>${esc(formatYmd(p.key))}</td><td class="num-col">${esc(formatMinutes(p.minutes))}</td></tr>`).join("")}
+    if(chartViewMode["log" + kind.id]==="table"){
+      const rows = series.filter(pt=>pt.value).reverse();
+      wrap.innerHTML = `<table class="chart-table"><thead><tr><th>Day</th><th class="num-col">${esc(kind.chartCol)}</th></tr></thead><tbody>
+        ${rows.map(pt=>`<tr><td>${esc(formatYmd(pt.key))}</td><td class="num-col">${esc(kind.bare(pt.value))}</td></tr>`).join("")}
       </tbody></table>`;
       return;
     }
 
-    const yMax = niceTimeMax(Math.max(...series.map(p=>p.minutes), 1));
+    const yMax = kind.axisMax(Math.max(...series.map(pt=>pt.value), 1));
     const stepX = 18;
     const leftPad = 62, rightPad = 24, topPad = 14, bottomPad = 28, plotH = 150;
-    const plotW = (series.length-1) * stepX;
-    const width = plotW + leftPad + rightPad;
+    const width = (series.length-1)*stepX + leftPad + rightPad;
     const height = plotH + topPad + bottomPad;
     const xAt = i => leftPad + i*stepX;
     const yAt = v => topPad + plotH - (v/yMax)*plotH;
 
     const yTicks = [0, yMax*0.25, yMax*0.5, yMax*0.75, yMax];
-    const gridSvg = yTicks.map(t=>`<line class="grid-line" x1="${leftPad}" x2="${width-rightPad}" y1="${yAt(t)}" y2="${yAt(t)}"></line><text x="${leftPad-8}" y="${yAt(t)+4}" text-anchor="end">${esc(formatMinutes(t))}</text>`).join("");
+    const gridSvg = yTicks.map(t=>`<line class="grid-line" x1="${leftPad}" x2="${width-rightPad}" y1="${yAt(t)}" y2="${yAt(t)}"></line><text x="${leftPad-8}" y="${yAt(t)+4}" text-anchor="end">${esc(kind.axisLabel(t))}</text>`).join("");
 
-    const linePoints = series.map((p,i)=>`${xAt(i)},${yAt(p.minutes)}`).join(" ");
+    const linePoints = series.map((pt,i)=>`${xAt(i)},${yAt(pt.value)}`).join(" ");
     const areaPoints = `${xAt(0)},${yAt(0)} ` + linePoints + ` ${xAt(series.length-1)},${yAt(0)}`;
 
-    // A dot on each day that has something logged, so a single day's listening surrounded
-    // by silence is still visible where the line alone would be flat.
+    // A dot on each day that has something logged, so a single day surrounded by silence
+    // is still visible where the line alone would be flat.
     let dots = "", hits = "", xLabels = "";
-    series.forEach((p,i)=>{
-      if(p.minutes) dots += `<circle cx="${xAt(i)}" cy="${yAt(p.minutes)}" r="2.5" fill="var(--series-1)"></circle>`;
-      hits += `<circle cx="${xAt(i)}" cy="${yAt(p.minutes)}" r="9" fill="transparent" data-tip="${esc(dayLabel(p.key) + ": " + formatMinutes(p.minutes))}"></circle>`;
+    series.forEach((pt,i)=>{
+      if(pt.value) dots += `<circle cx="${xAt(i)}" cy="${yAt(pt.value)}" r="2.5" fill="var(--series-1)"></circle>`;
+      hits += `<circle cx="${xAt(i)}" cy="${yAt(pt.value)}" r="9" fill="transparent" data-tip="${esc(dayLabel(pt.key) + ": " + kind.fmt(pt.value))}"></circle>`;
       if(i % 7 === 1 || i === series.length-1){
-        xLabels += `<text x="${xAt(i)}" y="${height-8}" text-anchor="middle">${i === series.length-1 ? "Today" : esc(dayLabel(p.key))}</text>`;
+        xLabels += `<text x="${xAt(i)}" y="${height-8}" text-anchor="middle">${i === series.length-1 ? "Today" : esc(dayLabel(pt.key))}</text>`;
       }
     });
     const last = series[series.length-1];
-    const endMarker = `<circle cx="${xAt(series.length-1)}" cy="${yAt(last.minutes)}" r="4" fill="var(--series-1)" stroke="var(--chart-surface)" stroke-width="2"></circle>
-      <text x="${xAt(series.length-1)}" y="${yAt(last.minutes)-10}" text-anchor="end" class="val-label">${esc(formatMinutes(last.minutes))}</text>`;
+    const endMarker = `<circle cx="${xAt(series.length-1)}" cy="${yAt(last.value)}" r="4" fill="var(--series-1)" stroke="var(--chart-surface)" stroke-width="2"></circle>
+      <text x="${xAt(series.length-1)}" y="${yAt(last.value)-10}" text-anchor="end" class="val-label">${esc(kind.bare(last.value))}</text>`;
 
-    const total = series.reduce((s,p)=>s+p.minutes,0);
+    const total = series.reduce((sum,pt)=>sum+pt.value, 0);
     wrap.innerHTML = `<div class="chart-scroll"><svg class="chart-svg" viewBox="0 0 ${width} ${height}" style="width:${width}px; height:${height}px; min-width:100%;">
         ${gridSvg}
         <line class="axis-line" x1="${leftPad}" x2="${width-rightPad}" y1="${topPad+plotH}" y2="${topPad+plotH}"></line>
@@ -4168,7 +4205,7 @@
         ${xLabels}
         ${hits}
       </svg></div>
-      <p class="muted" style="margin-bottom:0;">${esc(formatMinutes(total))} over the last 30 days · ${esc(formatMinutes(total/30))} a day.</p>`;
+      <p class="muted" style="margin-bottom:0;">${esc(kind.fmt(total))} over the last 30 days · ${esc(kind.fmt(total/30))} a day.</p>`;
   }
 
   // Discovery: ways of choosing what to read next. "Pick for me" builds a weighted list
@@ -4191,7 +4228,6 @@
       <button class="small" data-action="start-reading" data-id="${esc(pick.id)}" style="margin-top:8px;">Start Reading</button>
     </div>`;
   }
-  $("pickForMeBtn").addEventListener("click", ()=>pickForMe("pickForMeResult"));
 
   function renderMoodPicker(){
     const sel = $("moodPickerSelect");
@@ -4640,20 +4676,20 @@
   // rebuild everything than to work out precisely which parts a change affected.
   // ---------- MASTER RENDER ----------
   function renderAll(){
-    renderTBR();
-    renderReading();
+    renderLibrary();
     renderRead();
-    renderDnf();
-    renderAudiobooks();
-    renderSeries();
-    renderRankings();
+    renderLogs();
     renderStats();
-    renderCharts();
+    renderReadingPace();
+    renderTBR();
     renderMoodPicker();
+    renderCompare();
     renderRecs();
     renderChallenges();
-    renderLibrary();
-    renderCompare();
+    renderDnf();
+    renderSeries();
+    renderRankings();
+    renderCharts();
     renderBackupNudge();
   }
 
