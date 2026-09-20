@@ -978,6 +978,77 @@
   const LISTEN_LOG_MAX = 1440;
   const AUDIO_LENGTH_MAX = 12000;
 
+  // The app tracks reading twice over: an audiobook against its running time in minutes,
+  // everything else against its page count in pages. Rather than write the records, the
+  // cards, the tiles and the charts once per unit and watch the two drift apart,
+  // everything that actually differs between them is gathered here, and the rest of the
+  // file is written once against this description.
+  //   id        - ids on the page are log<Id><Thing>, so el(kind, "Cards") finds them
+  //   field     - the amount field inside one log entry
+  //   logField  - where the log itself lives on a book
+  //   totalField- what the log is measured against
+  //   fmt       - a quantity on its own; bare is the same number where the unit is
+  //               already established, e.g. the right-hand side of "2h 30m of 10h"
+  const LOG_KINDS = {
+    audio: {
+      id: "Audio",
+      field: "minutes", logField: "listenLog", totalField: "audioLength",
+      dayMax: LISTEN_LOG_MAX, totalMax: AUDIO_LENGTH_MAX,
+      belongs: b => b.format === "audiobook",
+      fmt: n => formatMinutes(n),
+      bare: n => formatMinutes(n),
+      noun: "audiobook",
+      totalLabel: "Length", logLabel: "Listened", logBtn: "Log time",
+      amountNoun: "a time", totalNoun: "a length",
+      doneSoon: "any minute now",
+      needTotal: "add a length to see what is left",
+      needTotalForPct: "add a length to track it by time",
+      nothingYet: "No length or listening time recorded yet.",
+      logTitle: "Listening log",
+      tileLabels: ["In Progress", "Total Length", "Time Listened", "Time Remaining", "Time / Day (last 7 days)"],
+      chartCol: "Time listened",
+      chartEmpty: "No listening time logged in the last 30 days",
+      axisMax: v => niceTimeMax(v),
+      axisLabel: v => formatMinutes(v),
+      unit: "",
+      // The one thing the two sides cannot share: a time needs an hours box and a minutes
+      // box, an amount of pages needs a single number box. Both are read back by
+      // readLogAmount, which knows about either shape.
+      amountInputs: (value, label) => hmInputsHTML(value, label)
+    },
+    pages: {
+      id: "Pages",
+      field: "pages", logField: "readingLog", totalField: "pages",
+      dayMax: READING_LOG_MAX, totalMax: 99999,
+      belongs: b => b.format !== "audiobook",
+      fmt: n => Math.round(n).toLocaleString() + (Math.round(n) === 1 ? " page" : " pages"),
+      bare: n => Math.round(n).toLocaleString(),
+      noun: "book",
+      totalLabel: "Pages", logLabel: "Read", logBtn: "Log pages",
+      amountNoun: "a number of pages", totalNoun: "a page count",
+      doneSoon: "any page now",
+      needTotal: "add a page count to see what is left",
+      needTotalForPct: "add a page count to track it by pages",
+      nothingYet: "No page count or pages logged yet.",
+      logTitle: "Reading log",
+      tileLabels: ["In Progress", "Total Pages", "Pages Read", "Pages Remaining", "Pages / Day (last 7 days)"],
+      chartCol: "Pages logged",
+      chartEmpty: "No pages logged in the last 30 days",
+      axisMax: v => niceMax(v),
+      axisLabel: v => Math.round(v).toLocaleString(),
+      unit: "pages",
+      amountInputs: (value, label) =>
+        `<input type="number" min="0" max="99999" placeholder="pages" value="${value == null ? "" : value}" data-log-amount aria-label="${esc(label)}">`
+    }
+  };
+  const BOTH_LOGS = [LOG_KINDS.audio, LOG_KINDS.pages];
+  // A book's log, what it is measured against, and how much of it is done. Every reader of
+  // a log goes through these three rather than naming listenLog or readingLog directly.
+  function logEntries(book, kind){ return book[kind.logField] || []; }
+  function logTotal(book, kind){ return book[kind.totalField]; }
+  function logDone(book, kind){ return logEntries(book, kind).reduce((sum,e)=>sum + e[kind.field], 0); }
+  function logKindFor(book){ return LOG_KINDS.audio.belongs(book) ? LOG_KINDS.audio : LOG_KINDS.pages; }
+
   let store = loadStore();
   let data = activeProfile().data;
   let selectionMode = false;
@@ -1119,12 +1190,12 @@
       coverData: (typeof raw.coverData === "string" && raw.coverData.length <= COVER_DATA_MAX
         && COVER_DATA_RE.test(raw.coverData)) ? raw.coverData : "",
       ownership: normalizeOwnership(raw),
-      readingLog: normalizeReadingLog(raw.readingLog),
+      readingLog: normalizeLog(raw.readingLog, LOG_KINDS.pages),
       // Audiobook running time and listening log, both in whole minutes. They are kept on
       // every book, not only audiobooks, so switching a book's format back and forth
       // never throws the times away.
       audioLength: audioLength > 0 ? Math.min(AUDIO_LENGTH_MAX, audioLength) : null,
-      listenLog: normalizeListenLog(raw.listenLog)
+      listenLog: normalizeLog(raw.listenLog, LOG_KINDS.audio)
     });
     // The two ordering fields only exist once a list has been dragged.
     if(isFinite(parseFloat(raw.sortIndex))) book.sortIndex = parseFloat(raw.sortIndex);
@@ -1148,30 +1219,23 @@
     }
     return [];
   }
-  // The daily page log: one {date, pages} entry per calendar day, oldest first. Entries
-  // with a bad date or a non-positive count are dropped, and two entries for the same day
-  // (a hand-edited backup, say) are added together rather than one overwriting the other.
-  function normalizeReadingLog(raw){
+  // A daily log: one entry per calendar day, oldest first, holding pages or minutes
+  // according to the kind. Entries with a bad date or a non-positive amount are dropped,
+  // and two entries for the same day (a hand-edited backup, say) are added together
+  // rather than one overwriting the other.
+  function normalizeLog(raw, kind){
     const byDate = {};
     (Array.isArray(raw) ? raw : []).forEach(e=>{
       if(!e || typeof e !== "object" || !parseYmd(e.date)) return;
-      const pages = parseInt(e.pages,10);
-      if(!(pages > 0)) return;
-      byDate[e.date] = Math.min(READING_LOG_MAX, (byDate[e.date]||0) + pages);
+      const amount = parseInt(e[kind.field],10);
+      if(!(amount > 0)) return;
+      byDate[e.date] = Math.min(kind.dayMax, (byDate[e.date]||0) + amount);
     });
-    return Object.keys(byDate).sort().map(date=>({ date, pages: byDate[date] }));
-  }
-  // The listening log, the minutes-per-day twin of readingLog: same rules, same repair of
-  // a hand-edited file, with minutes in place of pages.
-  function normalizeListenLog(raw){
-    const byDate = {};
-    (Array.isArray(raw) ? raw : []).forEach(e=>{
-      if(!e || typeof e !== "object" || !parseYmd(e.date)) return;
-      const minutes = parseInt(e.minutes,10);
-      if(!(minutes > 0)) return;
-      byDate[e.date] = Math.min(LISTEN_LOG_MAX, (byDate[e.date]||0) + minutes);
+    return Object.keys(byDate).sort().map(date=>{
+      const entry = { date };
+      entry[kind.field] = byDate[date];
+      return entry;
     });
-    return Object.keys(byDate).sort().map(date=>({ date, minutes: byDate[date] }));
   }
   function normalizeChallenge(raw){
     const type = raw.type === "bingo" ? "bingo" : "checklist";
@@ -2753,24 +2817,10 @@
     (book.tags||[]).forEach(t=>badges+=`<span class="badge">${esc(t)}</span>`);
 
     let extra = "";
-    if(book.status==="reading" && book.format === "audiobook"){
-      // An audiobook is measured in minutes, so its card offers the listening log in place
-      // of the page log - the same controls the Audiobooks tab uses. Everything else about
-      // the card is unchanged.
-      extra += logFiguresHTML(book, LOG_KINDS.audio) + logEntryRowHTML(book, LOG_KINDS.audio) + logSummaryHTML(book, LOG_KINDS.audio);
-    } else if(book.status==="reading"){
-      extra += `<div class="progress-bar"><div style="width:${book.progress||0}%"></div></div><div class="muted">${book.progress||0}% complete</div>`;
-      // Daily page log. The date defaults to today but can be moved back to catch up on a
-      // day that was missed; it cannot go into the future.
-      const today = todayStr();
-      const loggedToday = (book.readingLog||[]).filter(e=>e.date===today).reduce((s,e)=>s+e.pages,0);
-      const loggedTotal = loggedPages(book);
-      extra += `<div class="log-row">
-        <input type="number" min="1" max="${READING_LOG_MAX}" placeholder="Pages" aria-label="Pages read" data-log-pages="${esc(book.id)}">
-        <input type="date" value="${today}" max="${today}" aria-label="Day read" data-log-date="${esc(book.id)}">
-        <button class="small secondary" data-log-add="${esc(book.id)}">Log pages</button>
-      </div>`;
-      if(loggedTotal) extra += `<div class="muted">Today: ${loggedToday.toLocaleString()} page${loggedToday===1?"":"s"} · ${loggedTotal.toLocaleString()} logged in total · <button type="button" class="title-link log-edit-link" data-detail-id="${esc(book.id)}">Edit log</button></div>`;
+    if(book.status==="reading"){
+      // The same three pieces the Logs tab uses, in whichever unit this book is counted.
+      const kind = logKindFor(book);
+      extra += logFiguresHTML(book, kind) + logEntryRowHTML(book, kind) + logSummaryHTML(book, kind);
     }
     if(book.status==="read"){
       extra += `<div class="stars">${starStr(book.rating)}</div>`;
@@ -2868,30 +2918,27 @@
       moveInList(moveBtn.dataset.moveList, moveBtn.dataset.id, moveBtn.dataset.move);
       return;
     }
-    const logBtn = e.target.closest("[data-log-add]");
-    if(logBtn){ addLogEntry(logBtn.dataset.logAdd, logBtn.closest(".log-row")); return; }
-    const logSave = e.target.closest("[data-log-save]");
-    if(logSave){ saveLogEdit(logSave.closest("li")); return; }
-    const logDel = e.target.closest("[data-log-remove]");
-    if(logDel){
-      const book = data.books.find(b=>b.id===logDel.dataset.logRemove);
-      if(book) setLogEntry(book, logDel.dataset.logDate, 0);
+    // The four things a log row can do. Each row carries its kind and its book, so one
+    // branch each covers both audiobooks and paged books.
+    const addBtn = e.target.closest("[data-log-add]");
+    if(addBtn){
+      const row = addBtn.closest("[data-log-row]");
+      addLogEntry(kindOfRow(row), bookOfRow(row), row);
       return;
     }
-    // The same four moves for audiobooks: log a day's listening, save the running time,
-    // correct a logged day, remove one.
-    const listenBtn = e.target.closest("[data-listen-add]");
-    if(listenBtn){ addListenEntry(listenBtn.dataset.listenAdd, listenBtn.closest(".log-row")); return; }
-    const audioLenBtn = e.target.closest("[data-audio-save]");
-    if(audioLenBtn){ saveAudioLength(audioLenBtn.dataset.audioSave, audioLenBtn.closest(".log-row")); return; }
-    const pagesLenBtn = e.target.closest("[data-pages-save]");
-    if(pagesLenBtn){ savePageCount(pagesLenBtn.dataset.pagesSave, pagesLenBtn.closest(".log-row")); return; }
-    const listenSave = e.target.closest("[data-listen-save]");
-    if(listenSave){ saveListenEdit(listenSave.closest("li")); return; }
-    const listenDel = e.target.closest("[data-listen-remove]");
-    if(listenDel){
-      const book = data.books.find(b=>b.id===listenDel.dataset.listenRemove);
-      if(book) setListenEntry(book, listenDel.dataset.logDate, 0);
+    const totalBtn = e.target.closest("[data-total-save]");
+    if(totalBtn){
+      const row = totalBtn.closest("[data-total-row]");
+      saveLogTotal(kindOfRow(row), bookOfRow(row), row);
+      return;
+    }
+    const editSave = e.target.closest("[data-log-save]");
+    if(editSave){ saveLogEdit(editSave.closest("[data-log-edit]")); return; }
+    const editRemove = e.target.closest("[data-log-remove]");
+    if(editRemove){
+      const scope = editRemove.closest("[data-log-edit]");
+      const book = bookOfRow(scope);
+      if(book) setLogEntry(kindOfRow(scope), book, scope.dataset.logDate, 0);
       return;
     }
     const tierBtn = e.target.closest("[data-tier-move]");
@@ -2925,81 +2972,22 @@
 
   // Enter in a card's pages box logs it, the same as pressing the button; Enter in a
   // detail-view entry saves the correction.
+  // Enter anywhere in a log row does what that row's button does.
   document.body.addEventListener("keydown", (e)=>{
     if(e.key !== "Enter" || !e.target.closest) return;
-    const input = e.target.closest("[data-log-pages]");
-    if(input){ e.preventDefault(); addLogEntry(input.dataset.logPages, input.closest(".log-row")); return; }
-    const editInput = e.target.closest("[data-log-edit]");
-    if(editInput){ e.preventDefault(); saveLogEdit(editInput.closest("li")); return; }
-    // Enter anywhere in an audiobook row does what that row's button does.
-    const listenRow = e.target.closest(".listen-row");
-    if(listenRow){ e.preventDefault(); addListenEntry(listenRow.dataset.listenRow, listenRow); return; }
-    const lenRow = e.target.closest("[data-audio-len]");
-    if(lenRow){ e.preventDefault(); saveAudioLength(lenRow.dataset.audioLen, lenRow); return; }
-    const pagesLenRow = e.target.closest("[data-pages-len]");
-    if(pagesLenRow){ e.preventDefault(); savePageCount(pagesLenRow.dataset.pagesLen, pagesLenRow); return; }
-    const listenEditRow = e.target.closest("[data-listen-edit]");
-    if(listenEditRow){ e.preventDefault(); saveListenEdit(listenEditRow.closest("li")); }
+    const row = e.target.closest("[data-log-row]");
+    if(row){ e.preventDefault(); addLogEntry(kindOfRow(row), bookOfRow(row), row); return; }
+    const totalRow = e.target.closest("[data-total-row]");
+    if(totalRow){ e.preventDefault(); saveLogTotal(kindOfRow(totalRow), bookOfRow(totalRow), totalRow); return; }
+    const editRow = e.target.closest("[data-log-edit]");
+    if(editRow){ e.preventDefault(); saveLogEdit(editRow); }
   });
 
-  // ---------- DAILY PAGE LOG ----------
-  // A book in progress can record how many pages were read on each day. Several entries for
-  // one day add together. When the page count is known, logging also nudges the progress
-  // bar forward to match — but never backward, since a reader who started logging halfway
-  // through has read more than the log shows.
-  function loggedPages(book){
-    return (book.readingLog||[]).reduce((s,e)=>s+e.pages,0);
-  }
-  function addLogEntry(id, row){
-    const book = data.books.find(b=>b.id===id);
-    if(!book || !row) return;
-    const pagesInput = row.querySelector("[data-log-pages]");
-    const pages = parseInt(pagesInput.value,10);
-    const date = row.querySelector("[data-log-date]").value || todayStr();
-    if(!(pages >= 1 && pages <= READING_LOG_MAX)){ toast(`Enter a number of pages from 1 to ${READING_LOG_MAX}`); pagesInput.focus(); return; }
-    if(!parseYmd(date) || date > todayStr()){ toast("Pick today or an earlier day"); return; }
-    book.readingLog = normalizeReadingLog((book.readingLog||[]).concat([{ date, pages }]));
-    if(book.pages){
-      const pct = Math.min(100, Math.round(loggedPages(book) / book.pages * 100));
-      if(pct > (book.progress||0)) book.progress = pct;
-    }
-    if(!book.dateStarted || date < book.dateStarted) book.dateStarted = date;
-    saveData(); renderAll();
-    toast(`Logged ${pages} page${pages===1?"":"s"} for “${book.title}”` + (date===todayStr() ? "" : " on " + formatYmd(date)));
-  }
-  // Corrects one day's entry in place (pages = 0 removes it), for fixing a typo.
-  // Progress normally only moves forward, but a typo may be what pushed it forward: if the
-  // bar sits exactly where the log put it, it follows the corrected log back down.
-  // A progress figure set some other way (the slider) is left alone.
-  function setLogEntry(book, date, pages){
-    const logPct = () => book.pages ? Math.min(100, Math.round(loggedPages(book) / book.pages * 100)) : null;
-    const before = logPct();
-    const log = (book.readingLog||[]).filter(en=>en.date!==date);
-    if(pages > 0) log.push({ date, pages });
-    book.readingLog = normalizeReadingLog(log);
-    const after = logPct();
-    if(before != null && (book.progress||0) === before) book.progress = after;
-    saveData(); renderAll(); openDetail(book);
-    toast(pages > 0 ? `${formatYmd(date)} updated to ${pages} page${pages===1?"":"s"}` : "Log entry removed");
-  }
-  function saveLogEdit(li){
-    const input = li && li.querySelector("[data-log-edit]");
-    const book = input && data.books.find(b=>b.id===input.dataset.logEdit);
-    if(!book) return;
-    const pages = parseInt(input.value,10);
-    if(!(pages >= 0 && pages <= READING_LOG_MAX)){ toast(`Enter a number of pages from 0 to ${READING_LOG_MAX} (0 removes the day)`); input.focus(); return; }
-    const current = (book.readingLog||[]).find(en=>en.date===input.dataset.logDate);
-    if(current && current.pages === pages){ toast("No change"); return; }
-    setLogEntry(book, input.dataset.logDate, pages);
-  }
-
-
-  // ---------- AUDIOBOOK TIMES ----------
-  // Audiobooks are not a separate library: they are the books whose `format` is
-  // "audiobook", and the Audiobooks tab is a view over them. Two fields are theirs alone,
-  // both in whole minutes - `audioLength`, the running time, and `listenLog`, the
-  // minutes-per-day twin of the page log. Minutes are the single stored unit; hours only
-  // ever exist on screen, which keeps every sum a plain addition.
+  // ---------- TIME INPUTS ----------
+  // Minutes are the stored unit for an audiobook; hours only ever exist on screen, which
+  // keeps every sum a plain addition. A time is typed as an hours box plus a minutes box,
+  // so there is no format to parse and none to get wrong: "1h 20", "1:20" and "80" cannot
+  // be confused because they cannot be typed.
   function formatMinutes(mins){
     mins = Math.max(0, Math.round(mins||0));
     const h = Math.floor(mins/60), m = mins%60;
@@ -3030,165 +3018,122 @@
     if(mEl) mEl.value = mins ? mins%60 : "";
   }
 
-  // Which book each side's daily chart is showing; "" means all of them together.
-  const logChartBookId = { Audio: "", Pages: "" };
-  function listenedMinutes(book){
-    return (book.listenLog||[]).reduce((s,e)=>s+e.minutes,0);
+  // ---------- THE TWO LOGS ----------
+  // Everything below is written once and used for both kinds, against the LOG_KINDS
+  // description at the top of the file. A book in progress records how much was read or
+  // listened to on each day; several entries for one day add together; and when the total
+  // is known, logging nudges the progress bar forward to match - but never backward, since
+  // someone who starts logging partway through is further along than the log can show.
+
+  // Reads an amount back out of a row, whichever shape of input that kind uses. null when
+  // the boxes are empty, so "left blank" is distinguishable from a deliberate zero.
+  function readLogAmount(scope, kind){
+    if(kind === LOG_KINDS.audio) return readHmPair(scope);
+    const input = scope && scope.querySelector("[data-log-amount]");
+    const raw = input ? input.value.trim() : "";
+    if(!raw) return null;
+    const n = parseInt(raw, 10);
+    return isFinite(n) ? n : NaN;
+  }
+  function focusLogAmount(scope){
+    const input = scope && scope.querySelector("[data-hm-h], [data-log-amount]");
+    if(input) input.focus();
+  }
+  // Which kind a row belongs to, carried in the markup so one handler serves both.
+  function kindOfRow(el){ return LOG_KINDS[el && el.dataset.kind] || LOG_KINDS.pages; }
+  function bookOfRow(el){ return data.books.find(b=>b.id === (el && el.dataset.book)); }
+
+  function syncLogProgress(book, kind){
+    const total = logTotal(book, kind);
+    if(!total) return;
+    const pct = Math.min(100, Math.round(logDone(book, kind) / total * 100));
+    if(pct > (book.progress||0)) book.progress = pct;
+  }
+  function setLogEntries(book, kind, list){
+    book[kind.logField] = normalizeLog(list, kind);
+  }
+  function logEntryOf(date, kind, amount){
+    const entry = { date };
+    entry[kind.field] = amount;
+    return entry;
   }
 
-  // Adds one day's listening from a card's row. Several entries for a day add together,
-  // and logging a day earlier than dateStarted moves the start back, both as pages do.
-  function addListenEntry(id, row){
-    const book = data.books.find(b=>b.id===id);
+  // Adds one day from a card's row. Logging a day earlier than dateStarted moves the start
+  // back, since the book was evidently open by then.
+  function addLogEntry(kind, book, row){
     if(!book || !row) return;
-    const minutes = readHmPair(row);
-    const dateEl = row.querySelector("[data-listen-date]");
+    const amount = readLogAmount(row, kind);
+    const dateEl = row.querySelector("[data-log-date]");
     const date = (dateEl && dateEl.value) || todayStr();
-    if(!(minutes >= 1 && minutes <= LISTEN_LOG_MAX)){
-      toast(`Enter a time from 1m to ${formatMinutes(LISTEN_LOG_MAX)}`);
-      const first = row.querySelector("[data-hm-h]");
-      if(first) first.focus();
+    if(!(amount >= 1 && amount <= kind.dayMax)){
+      toast(`Enter ${kind.amountNoun} from ${kind.bare(1)} to ${kind.bare(kind.dayMax)}`);
+      focusLogAmount(row);
       return;
     }
     if(!parseYmd(date) || date > todayStr()){ toast("Pick today or an earlier day"); return; }
-    book.listenLog = normalizeListenLog((book.listenLog||[]).concat([{ date, minutes }]));
-    syncLogProgress(book, LOG_KINDS.audio);
+    setLogEntries(book, kind, logEntries(book, kind).concat([logEntryOf(date, kind, amount)]));
+    syncLogProgress(book, kind);
     if(!book.dateStarted || date < book.dateStarted) book.dateStarted = date;
     saveData(); renderAll();
-    toast(`Logged ${formatMinutes(minutes)} for “${book.title}”` + (date===todayStr() ? "" : " on " + formatYmd(date)));
+    toast(`Logged ${kind.fmt(amount)} for “${book.title}”` + (date===todayStr() ? "" : " on " + formatYmd(date)));
   }
-  // Corrects one day in place (0 removes it). Progress follows a correction down only when
-  // it is sitting exactly where the log put it - see setLogEntry for why.
-  function setListenEntry(book, date, minutes){
-    const pctOf = () => book.audioLength ? Math.min(100, Math.round(listenedMinutes(book) / book.audioLength * 100)) : null;
+  // Corrects one day in place (0 removes it), for fixing a typo. Progress normally only
+  // moves forward, but a typo may be what pushed it forward: if the bar sits exactly where
+  // the log put it, it follows the corrected log back down. A figure set some other way,
+  // such as the slider, is left alone.
+  function setLogEntry(kind, book, date, amount){
+    const pctOf = () => {
+      const total = logTotal(book, kind);
+      return total ? Math.min(100, Math.round(logDone(book, kind) / total * 100)) : null;
+    };
     const before = pctOf();
-    const log = (book.listenLog||[]).filter(en=>en.date!==date);
-    if(minutes > 0) log.push({ date, minutes });
-    book.listenLog = normalizeListenLog(log);
+    const kept = logEntries(book, kind).filter(en=>en.date !== date);
+    setLogEntries(book, kind, amount > 0 ? kept.concat([logEntryOf(date, kind, amount)]) : kept);
     const after = pctOf();
     if(before != null && (book.progress||0) === before) book.progress = after;
     saveData(); renderAll(); openDetail(book);
-    toast(minutes > 0 ? `${formatYmd(date)} updated to ${formatMinutes(minutes)}` : "Log entry removed");
+    toast(amount > 0 ? `${formatYmd(date)} updated to ${kind.fmt(amount)}` : "Log entry removed");
   }
-  function saveListenEdit(li){
-    const scope = li && li.querySelector("[data-listen-edit]");
-    const book = scope && data.books.find(b=>b.id===scope.dataset.listenEdit);
+  // Saves a correction typed into the detail view's log editor.
+  function saveLogEdit(scope){
+    const kind = kindOfRow(scope), book = bookOfRow(scope);
     if(!book) return;
-    const minutes = readHmPair(scope);
-    if(!(minutes >= 0 && minutes <= LISTEN_LOG_MAX)){
-      toast(`Enter a time from 0 to ${formatMinutes(LISTEN_LOG_MAX)} (0 removes the day)`);
+    const amount = readLogAmount(scope, kind);
+    if(!(amount >= 0 && amount <= kind.dayMax)){
+      toast(`Enter ${kind.amountNoun} from ${kind.bare(0)} to ${kind.bare(kind.dayMax)} (zero removes the day)`);
+      focusLogAmount(scope);
       return;
     }
-    const current = (book.listenLog||[]).find(en=>en.date===scope.dataset.logDate);
-    if(current && current.minutes === minutes){ toast("No change"); return; }
-    setListenEntry(book, scope.dataset.logDate, minutes);
+    const current = logEntries(book, kind).find(en=>en.date === scope.dataset.logDate);
+    if(current && current[kind.field] === amount){ toast("No change"); return; }
+    setLogEntry(kind, book, scope.dataset.logDate, amount);
   }
-  // The running time, saved from the card. Clearing both boxes (or zero) removes it, which
-  // is how a length entered by mistake is taken off again.
-  function saveAudioLength(id, row){
-    const book = data.books.find(b=>b.id===id);
+  // The running time or page count, saved from the card. Clearing the boxes (or zero)
+  // removes it, which is how one entered by mistake is taken off again. An out-of-range
+  // value is refused rather than clamped, so a mistyped total is never silently turned
+  // into a different one.
+  function saveLogTotal(kind, book, row){
     if(!book || !row) return;
-    const minutes = readHmPair(row);
-    if(minutes !== null && !(minutes >= 0 && minutes <= AUDIO_LENGTH_MAX)){
-      toast(`Enter a length from 0 to ${formatMinutes(AUDIO_LENGTH_MAX)}`);
+    const amount = readLogAmount(row, kind);
+    if(amount !== null && !(amount >= 0 && amount <= kind.totalMax)){
+      toast(`Enter ${kind.totalNoun} from ${kind.bare(0)} to ${kind.bare(kind.totalMax)}`);
+      focusLogAmount(row);
       return;
     }
-    const next = minutes ? minutes : null;
-    if(next === (book.audioLength||null)){ toast("No change"); return; }
-    book.audioLength = next;
-    syncLogProgress(book, LOG_KINDS.audio);
+    const next = amount ? amount : null;
+    if(next === (logTotal(book, kind) || null)){ toast("No change"); return; }
+    book[kind.totalField] = next;
+    syncLogProgress(book, kind);
     saveData(); renderAll();
-    toast(next ? `Length set to ${formatMinutes(next)}` : "Length cleared");
+    toast(next ? `${kind.totalLabel} set to ${kind.bare(next)}` : `${kind.totalLabel} cleared`);
   }
-
-
-  // The page count, saved from the card - the paged twin of saveAudioLength. Clearing the
-  // box (or zero) removes it, which is how a count entered by mistake is taken off again.
-  function savePageCount(id, row){
-    const book = data.books.find(b=>b.id===id);
-    if(!book || !row) return;
-    const input = row.querySelector("[data-pages-total]");
-    const raw = input ? input.value.trim() : "";
-    const pages = raw === "" ? null : parseInt(raw, 10);
-    if(pages !== null && !(pages >= 0 && pages <= 99999)){
-      toast("Enter a page count from 0 to 99,999");
-      if(input) input.focus();
-      return;
-    }
-    const next = pages ? pages : null;
-    if(next === (book.pages||null)){ toast("No change"); return; }
-    book.pages = next;
-    syncLogProgress(book, LOG_KINDS.pages);
-    saveData(); renderAll();
-    toast(next ? `Page count set to ${next.toLocaleString()}` : "Page count cleared");
-  }
-
-  // ---------- THE TWO LOGS ----------
-  // The Logs tab tracks the same thing twice over: an audiobook against its running time
-  // in minutes, everything else against its page count in pages. Rather than write the
-  // cards, tiles and chart once per unit and watch the two drift apart, everything that
-  // actually differs between them is gathered here, and the code below is written once
-  // against this description.
-  const LOG_KINDS = {
-    audio: {
-      id: "Audio",                                  // ids on the page are log<Id><Thing>
-      belongs: b => b.format === "audiobook",
-      entries: b => b.listenLog || [],
-      total: b => b.audioLength,
-      // fmt is a quantity on its own; bare is the same number where the unit is already
-      // established, e.g. the right-hand side of "2h 30m of 10h".
-      fmt: n => formatMinutes(n),
-      bare: n => formatMinutes(n),
-      noun: "audiobook",
-      totalLabel: "Length", logLabel: "Listened", logBtn: "Log time",
-      doneSoon: "any minute now",
-      needTotal: "add a length to see what is left",
-      needTotalForPct: "add a length to track it by time",
-      nothingYet: "No length or listening time recorded yet.",
-      tileLabels: ["In Progress", "Total Length", "Time Listened", "Time Remaining", "Time / Day (last 7 days)"],
-      chartCol: "Time listened",
-      chartEmpty: "No listening time logged in the last 30 days",
-      axisMax: v => niceTimeMax(v),
-      axisLabel: v => formatMinutes(v)
-    },
-    pages: {
-      id: "Pages",
-      belongs: b => b.format !== "audiobook",
-      entries: b => b.readingLog || [],
-      total: b => b.pages,
-      fmt: n => Math.round(n).toLocaleString() + (Math.round(n) === 1 ? " page" : " pages"),
-      bare: n => Math.round(n).toLocaleString(),
-      noun: "book",
-      totalLabel: "Pages", logLabel: "Read", logBtn: "Log pages",
-      doneSoon: "any page now",
-      needTotal: "add a page count to see what is left",
-      needTotalForPct: "add a page count to track it by pages",
-      nothingYet: "No page count or pages logged yet.",
-      tileLabels: ["In Progress", "Total Pages", "Pages Read", "Pages Remaining", "Pages / Day (last 7 days)"],
-      chartCol: "Pages logged",
-      chartEmpty: "No pages logged in the last 30 days",
-      axisMax: v => niceMax(v),
-      axisLabel: v => Math.round(v).toLocaleString()
-    }
-  };
-  // An entry is {date, minutes} on one side and {date, pages} on the other; this is the
-  // only place that difference is spelled out.
-  function logAmount(kind, entry){ return kind === LOG_KINDS.audio ? entry.minutes : entry.pages; }
-  function logDone(book, kind){ return kind.entries(book).reduce((sum,e)=>sum+logAmount(kind,e), 0); }
-  function logBooks(kind){ return data.books.filter(kind.belongs); }
-  // The Logs tab is only about what is being read right now. A finished or abandoned book
-  // keeps its log - it is still on the chart below, in the Pacing figures, and editable
-  // from the book's detail view - but it is not something left to track, so it does not
-  // take up a card here.
-  function logInProgress(kind){ return logBooks(kind).filter(b=>b.status === "reading"); }
-  function el(kind, thing){ return $("log" + kind.id + thing); }
 
   // Amount per day since the first entry (today included), and the finish date that rate
   // projects. Null until something is logged, because a rate needs a day to divide by.
   function logPace(book, kind){
-    const entries = kind.entries(book);
+    const entries = logEntries(book, kind);
     if(!entries.length) return null;
-    const done = logDone(book, kind), total = kind.total(book);
+    const done = logDone(book, kind), total = logTotal(book, kind);
     const perDay = done / (daysBetween(entries[0].date, todayStr()) + 1);
     let finish = "";
     if(book.status === "read") finish = "finished";
@@ -3197,30 +3142,26 @@
     else if(perDay > 0) finish = "est. finish " + formatYmd(daysAgoStr(-Math.ceil((total - done) / perDay)));
     return { perDay, finish };
   }
-  // Raising `progress` to match the log, on the terms both logs have always used: only
-  // ever forward, since someone who starts logging partway through is further along than
-  // the log alone can show.
-  function syncLogProgress(book, kind){
-    const total = kind.total(book);
-    if(!total) return;
-    const pct = Math.min(100, Math.round(logDone(book, kind) / total * 100));
-    if(pct > (book.progress||0)) book.progress = pct;
+  // How much of a book is done, for display: the higher of the log and the progress slider
+  // turned back into an amount, since a slider moved by hand is evidence of reading the log
+  // never saw. A book marked Read is done whatever either says. The slider only speaks in
+  // percentages, so it can only be converted when there is a total to take a percentage of.
+  function logShownDone(book, kind){
+    const total = logTotal(book, kind), logged = logDone(book, kind);
+    if(!total) return logged;
+    if(book.status === "read") return total;
+    return Math.min(total, Math.max(logged, Math.round((book.progress||0)/100*total)));
   }
 
-  // The progress bar and the "X of Y, Z left" line, shared by the Logs card and by the
-  // Currently-Reading-style card that bookCardHTML still builds elsewhere.
+  // ---------- LOG MARKUP ----------
+  // The progress bar and the "X of Y, Z left" line.
   function logFiguresHTML(book, kind){
-    const total = kind.total(book), logged = logDone(book, kind);
-    // The slider only speaks in percentages, so it can only be turned back into an amount
-    // when there is a total to take a percentage of. Where it can, the higher of the two
-    // wins: a slider moved by hand is evidence of progress the log never saw.
-    const done = (total && book.status === "read")
-      ? total
-      : (total ? Math.min(total, Math.max(logged, Math.round((book.progress||0)/100*total))) : logged);
-    const pct = total ? Math.min(100, Math.round(done/total*100)) : (book.status === "read" ? 100 : (book.progress||0));
+    const total = logTotal(book, kind), done = logShownDone(book, kind);
+    const pct = total ? Math.min(100, Math.round(done/total*100))
+                      : (book.status === "read" ? 100 : (book.progress||0));
     let line;
     if(total){
-      line = `<strong>${esc(kind.fmt(Math.min(done,total)))}</strong> of ${esc(kind.bare(total))} · <strong>${esc(kind.fmt(Math.max(0, total-done)))}</strong> remaining · ${pct}%`;
+      line = `<strong>${esc(kind.fmt(done))}</strong> of ${esc(kind.bare(total))} · <strong>${esc(kind.fmt(Math.max(0, total-done)))}</strong> remaining · ${pct}%`;
     } else if(done){
       line = `<strong>${esc(kind.fmt(done))}</strong> logged · ${esc(kind.needTotal)}`;
     } else if(pct){
@@ -3231,33 +3172,57 @@
     }
     return `<div class="progress-bar"><div style="width:${pct}%"></div></div><div class="audio-line">${line}</div>`;
   }
-  // The two editable rows. Their inner controls are the one thing that cannot be shared:
-  // a time needs an hours and a minutes box, a page count needs one number box. Both rows
-  // carry the data-* attributes the existing click and keydown handlers already look for.
+  // Both editable rows carry the kind and the book, so one pair of handlers serves either.
+  function logRowAttrs(book, kind){ return `data-kind="${kind === LOG_KINDS.audio ? "audio" : "pages"}" data-book="${esc(book.id)}"`; }
   function logTotalRowHTML(book, kind){
-    const inner = kind === LOG_KINDS.audio
-      ? `${hmInputsHTML(book.audioLength, "Audiobook length")}<button class="small secondary" data-audio-save="${esc(book.id)}">Save</button>`
-      : `<input type="number" min="0" max="99999" placeholder="pages" value="${book.pages || ""}" data-pages-total aria-label="Page count"><button class="small secondary" data-pages-save="${esc(book.id)}">Save</button>`;
-    const rowAttr = kind === LOG_KINDS.audio ? `data-audio-len="${esc(book.id)}"` : `data-pages-len="${esc(book.id)}"`;
-    return `<div class="log-row" ${rowAttr}><span class="hm-unit">${esc(kind.totalLabel)}</span>${inner}</div>`;
+    return `<div class="log-row" data-total-row ${logRowAttrs(book, kind)}>
+      <span class="hm-unit">${esc(kind.totalLabel)}</span>
+      ${kind.amountInputs(logTotal(book, kind), kind.totalNoun)}
+      <button class="small secondary" data-total-save>Save</button>
+    </div>`;
   }
   function logEntryRowHTML(book, kind){
     const today = todayStr();
-    const isAudio = kind === LOG_KINDS.audio;
-    const inner = isAudio
-      ? `${hmInputsHTML(null, "Time listened")}<input type="date" value="${today}" max="${today}" aria-label="Day listened" data-listen-date="${esc(book.id)}"><button class="small secondary" data-listen-add="${esc(book.id)}">${esc(kind.logBtn)}</button>`
-      : `<input type="number" min="1" max="${READING_LOG_MAX}" placeholder="pages" aria-label="Pages read" data-log-pages="${esc(book.id)}"><input type="date" value="${today}" max="${today}" aria-label="Day read" data-log-date="${esc(book.id)}"><button class="small secondary" data-log-add="${esc(book.id)}">${esc(kind.logBtn)}</button>`;
-    const rowClass = isAudio ? "log-row listen-row" : "log-row";
-    const rowAttr = isAudio ? `data-listen-row="${esc(book.id)}"` : "";
-    return `<div class="${rowClass}" ${rowAttr}><span class="hm-unit">${esc(kind.logLabel)}</span>${inner}</div>`;
+    return `<div class="log-row" data-log-row ${logRowAttrs(book, kind)}>
+      <span class="hm-unit">${esc(kind.logLabel)}</span>
+      ${kind.amountInputs(null, kind.amountNoun + " for one day")}
+      <input type="date" value="${today}" max="${today}" aria-label="Which day" data-log-date>
+      <button class="small secondary" data-log-add>${esc(kind.logBtn)}</button>
+    </div>`;
   }
   function logSummaryHTML(book, kind){
-    const days = kind.entries(book).length;
-    if(!days) return "";
+    const entries = logEntries(book, kind);
+    if(!entries.length) return "";
     const today = todayStr();
-    const todayTotal = kind.entries(book).filter(e=>e.date===today).reduce((sum,e)=>sum+logAmount(kind,e), 0);
-    return `<div class="audio-line">Today: ${esc(kind.fmt(todayTotal))} · ${days} day${days===1?"":"s"} logged · <button type="button" class="title-link log-edit-link" data-detail-id="${esc(book.id)}">Edit log</button></div>`;
+    const todayTotal = entries.filter(e=>e.date===today).reduce((sum,e)=>sum + e[kind.field], 0);
+    return `<div class="audio-line">Today: ${esc(kind.fmt(todayTotal))} · ${entries.length} day${entries.length===1?"":"s"} logged · <button type="button" class="title-link log-edit-link" data-detail-id="${esc(book.id)}">Edit log</button></div>`;
   }
+  // The editable log in the detail view: newest day first, each correctable or removable.
+  function logSectionHTML(book, kind){
+    const entries = logEntries(book, kind);
+    if(!entries.length) return "";
+    const total = logDone(book, kind), days = entries.length;
+    return `<div class="detail-section"><h3>${esc(kind.logTitle)} (${esc(kind.fmt(total))} over ${days} day${days===1?"":"s"})</h3>
+      <ul class="log-list">${entries.slice().reverse().map(e=>{
+        const when = formatYmd(e.date);
+        return `<li><span>${esc(when)}</span><span class="log-controls" data-log-edit ${logRowAttrs(book, kind)} data-log-date="${esc(e.date)}">
+          ${kind.amountInputs(e[kind.field], kind.amountNoun + " on " + when)}${kind.unit ? `<span class="hm-unit">${esc(kind.unit)}</span>` : ""}
+          <button class="small" data-log-save aria-label="Save ${esc(when)}">Save</button>
+          <button class="small secondary" data-log-remove aria-label="Remove ${esc(when)}">Remove</button></span></li>`;
+      }).join("")}</ul>
+      <p class="muted" style="margin:6px 0 0; font-size:0.78rem;">Change a value and press Save (or Enter) to fix a typo. Zero removes the day.</p></div>`;
+  }
+
+  // ---------- WHICH BOOKS EACH SIDE IS ABOUT ----------
+  // Which book each side's daily chart is showing; "" means all of them together.
+  const logChartBookId = { Audio: "", Pages: "" };
+  function logBooks(kind){ return data.books.filter(kind.belongs); }
+  // The Logs tab is only about what is being read right now. A finished or abandoned book
+  // keeps its log - it is still on the chart below, in the Pacing figures, and editable
+  // from the book's detail view - but it is not something left to track, so it does not
+  // take up a card here.
+  function logInProgress(kind){ return logBooks(kind).filter(b=>b.status === "reading"); }
+  function el(kind, thing){ return $("log" + kind.id + thing); }
 
   // ---------- RENDER: LOGS ----------
   // One card per book on this side of the Logs tab, carrying both editable fields: the
@@ -3306,13 +3271,13 @@
     // The tiles sum everything in progress, not the filtered list - they answer "how much
     // have I got on", and would be confusing if a search changed them.
     if(inProgress.length){
-      const totalAll = inProgress.reduce((sum,b)=>sum+(kind.total(b)||0), 0);
+      const totalAll = inProgress.reduce((sum,b)=>sum+(logTotal(b, kind)||0), 0);
       const doneAll = inProgress.reduce((sum,b)=>sum+logDone(b, kind), 0);
-      const leftAll = inProgress.reduce((sum,b)=>{ const t = kind.total(b); return sum + (t ? Math.max(0, t - logDone(b, kind)) : 0); }, 0);
+      const leftAll = inProgress.reduce((sum,b)=>{ const t = logTotal(b, kind); return sum + (t ? Math.max(0, t - logDone(b, kind)) : 0); }, 0);
       const byDate = logTotalsByDate(inProgress, kind);
       let last7 = 0;
       for(let i=0;i<7;i++) last7 += byDate[daysAgoStr(i)]||0;
-      const noTotal = inProgress.filter(b=>!kind.total(b)).length;
+      const noTotal = inProgress.filter(b=>!logTotal(b, kind)).length;
       const nums = [inProgress.length, kind.bare(totalAll), kind.bare(doneAll), kind.bare(leftAll), kind.bare(last7/7)];
       el(kind, "StatGrid").innerHTML = nums.map((num, i)=>{
         const label = (i === 1 && noTotal) ? kind.tileLabels[i] + " · " + noTotal + " without one" : kind.tileLabels[i];
@@ -3390,7 +3355,7 @@
     // Audio times are shown for any book that has them, so they are still visible on a
     // book whose format was later changed away from audiobook.
     if(book.audioLength || (book.listenLog||[]).length){
-      const listened = listenedMinutes(book);
+      const listened = logDone(book, LOG_KINDS.audio);
       row("Audiobook length", book.audioLength ? formatMinutes(book.audioLength) : "");
       row("Time listened", listened ? formatMinutes(listened) : "");
       if(book.audioLength) row("Time remaining", formatMinutes(Math.max(0, book.audioLength - listened)));
@@ -3405,27 +3370,7 @@
     row("Cover", book.coverData ? "Uploaded image" : (book.cover ? "From URL" : ""));
 
     const sections = [];
-    if(book.readingLog && book.readingLog.length){
-      const total = loggedPages(book);
-      sections.push(`<div class="detail-section"><h3>Reading log (${total.toLocaleString()} page${total===1?"":"s"} over ${book.readingLog.length} day${book.readingLog.length===1?"":"s"})</h3>
-        <ul class="log-list">${book.readingLog.slice().reverse().map(e=>
-          `<li><span>${esc(formatYmd(e.date))}</span><span class="log-controls">
-            <input type="number" min="0" max="${READING_LOG_MAX}" value="${e.pages}" data-log-edit="${esc(book.id)}" data-log-date="${esc(e.date)}" aria-label="Pages read on ${esc(formatYmd(e.date))}"> pages
-            <button class="small" data-log-save aria-label="Save pages for ${esc(formatYmd(e.date))}">Save</button>
-            <button class="small secondary" data-log-remove="${esc(book.id)}" data-log-date="${esc(e.date)}" aria-label="Remove entry for ${esc(formatYmd(e.date))}">Remove</button></span></li>`).join("")}</ul>
-        <p class="muted" style="margin:6px 0 0; font-size:0.78rem;">Change a number and press Save (or Enter) to fix a typo.</p></div>`);
-    }
-    if(book.listenLog && book.listenLog.length){
-      const total = listenedMinutes(book);
-      const days = book.listenLog.length;
-      sections.push(`<div class="detail-section"><h3>Listening log (${esc(formatMinutes(total))} over ${days} day${days===1?"":"s"})</h3>
-        <ul class="log-list">${book.listenLog.slice().reverse().map(e=>
-          `<li><span>${esc(formatYmd(e.date))}</span><span class="log-controls" data-listen-edit="${esc(book.id)}" data-log-date="${esc(e.date)}">
-            ${hmInputsHTML(e.minutes, "Time listened on " + formatYmd(e.date))}
-            <button class="small" data-listen-save aria-label="Save time for ${esc(formatYmd(e.date))}">Save</button>
-            <button class="small secondary" data-listen-remove="${esc(book.id)}" data-log-date="${esc(e.date)}" aria-label="Remove entry for ${esc(formatYmd(e.date))}">Remove</button></span></li>`).join("")}</ul>
-        <p class="muted" style="margin:6px 0 0; font-size:0.78rem;">Change the hours or minutes and press Save (or Enter) to fix a typo. Zero removes the day.</p></div>`);
-    }
+    BOTH_LOGS.forEach(kind=>{ const html = logSectionHTML(book, kind); if(html) sections.push(html); });
     if(book.dnfReason) sections.push(`<div class="detail-section"><h3>Reason for dropping</h3><div class="detail-notes">${esc(book.dnfReason)}</div></div>`);
     if(book.notes) sections.push(`<div class="detail-section"><h3>Notes</h3><div class="detail-notes">${esc(book.notes)}</div></div>`);
     if(book.quotes && book.quotes.length){
@@ -3832,21 +3777,15 @@
     return ymdOf(new Date(d.getFullYear(), d.getMonth(), d.getDate() - n));
   }
   function daysBetween(a, b){ return Math.round((parseYmd(b) - parseYmd(a)) / 86400000); }
-  // Pages logged per day across every book in the library, finished ones included.
-  // Pages only: the Pacing tiles it feeds are all labelled in pages, and an audiobook is
-  // counted in minutes on the Logs tab instead.
-  function dailyLogTotals(){
-    const byDate = {};
-    data.books.forEach(b=>(b.readingLog||[]).forEach(e=>{ byDate[e.date] = (byDate[e.date]||0) + e.pages; }));
-    return byDate;
-  }
   // Headline numbers for the stat tiles, or null when nothing has been logged yet.
   // The averages divide by every day in the window, reading or not, so they answer "how
   // many pages a day am I getting through" rather than "how much on a day I read".
   // The streak counts back from today; if nothing is logged today yet it counts from
   // yesterday, so an unbroken run doesn't read as zero every morning.
   function logPaceSummary(){
-    const byDate = dailyLogTotals();
+    // Pages only, across every book including finished ones: the tiles it feeds are all
+    // labelled in pages, and an audiobook is counted in minutes on the Logs tab instead.
+    const byDate = logTotalsByDate(data.books, LOG_KINDS.pages);
     if(!Object.keys(byDate).length) return null;
     const sumLast = n => { let t = 0; for(let i=0; i<n; i++) t += byDate[daysAgoStr(i)]||0; return t; };
     let streak = 0, i = byDate[daysAgoStr(0)] ? 0 : 1;
@@ -3865,13 +3804,9 @@
       wrap.innerHTML = `<div class="chart-empty">Nothing in progress. Start a book to track its pace here.</div>`;
       return;
     }
-    const kindOf = b => b.format === "audiobook" ? LOG_KINDS.audio : LOG_KINDS.pages;
     const rows = reading.map(b=>{
-      const kind = kindOf(b);
-      const total = kind.total(b), logged = logDone(b, kind);
-      // The slider only speaks in percentages, so it can only be turned back into an
-      // amount when there is a total to take a percentage of.
-      const done = total ? Math.min(total, Math.max(logged, Math.round((b.progress||0)/100*total))) : logged;
+      const kind = logKindFor(b);
+      const total = logTotal(b, kind), done = logShownDone(b, kind);
       const pace = logPace(b, kind);
       const rate = pace ? pace.perDay : 0;
       let finish = "—";
@@ -3886,8 +3821,8 @@
     }).join("");
     // Both hints ask about whichever measure each book is counted in.
     const hints = [];
-    if(!reading.some(b=>kindOf(b).entries(b).length)) hints.push("Log the pages you read, or the time you listen, each day from a book's card on the Logs tab to see its pace and finish date.");
-    else if(reading.some(b=>!kindOf(b).total(b))) hints.push("Add a page count, or an audiobook length, to a book to get its finish date.");
+    if(!reading.some(b=>logEntries(b, logKindFor(b)).length)) hints.push("Log the pages you read, or the time you listen, each day from a book's card on the Logs tab to see its pace and finish date.");
+    else if(reading.some(b=>!logTotal(b, logKindFor(b)))) hints.push("Add a page count, or an audiobook length, to a book to get its finish date.");
     wrap.innerHTML = `<div class="chart-scroll"><table class="chart-table"><thead><tr><th>Book</th><th class="num-col">Read / listened</th><th class="num-col">Per day</th><th class="num-col">Est. finish</th></tr></thead><tbody>${rows}</tbody></table></div>`
       + hints.map(h=>`<p class="muted" style="margin-bottom:0;">${esc(h)}</p>`).join("");
   }
@@ -4219,7 +4154,7 @@
   // reads as a trend rather than as thirty separate figures.
   function logTotalsByDate(books, kind){
     const byDate = {};
-    books.forEach(b=>kind.entries(b).forEach(e=>{ byDate[e.date] = (byDate[e.date]||0) + logAmount(kind, e); }));
+    books.forEach(b=>logEntries(b, kind).forEach(e=>{ byDate[e.date] = (byDate[e.date]||0) + e[kind.field]; }));
     return byDate;
   }
   // A y-axis top that divides into four clean times, so a time axis reads "30m", "1h",

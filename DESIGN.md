@@ -50,7 +50,7 @@ localStorage["bookTrackerProfiles_v1"]
 
 - **Single source of truth:** the in-memory `store`. `data` points into the active profile, so almost all feature code reads and writes `data.books` / `data.challenges` and never needs to know profiles exist.
 - **Render strategy:** "rebuild everything". After any change, `renderAll()` calls 13 render functions. Each one filters `data.books`, builds an HTML string, and assigns it to `innerHTML`. This is simple, and the screen always matches the data. The trade-off is that all interpolated text must go through `esc()`.
-- **Event handling:** delegated. Listeners sit on `document.body` or on stable containers and dispatch on `data-*` attributes (`data-detail-id`, `data-action`, `data-id`, `data-tier-move`, `data-move` / `data-move-list`, `data-send-id`, `data-log-add` / `data-log-save` / `data-log-remove`, `data-listen-add` / `data-listen-save` / `data-listen-remove`, `data-audio-save` / `data-pages-save`, `data-log-kind`, `data-grab-from`, `data-chart-toggle`, `data-tip`, `data-select-id`, `data-challenge`, `data-prof-*`). Re-rendering therefore never orphans a listener.
+- **Event handling:** delegated. Listeners sit on `document.body` or on stable containers and dispatch on `data-*` attributes (`data-detail-id`, `data-action`, `data-id`, `data-tier-move`, `data-move` / `data-move-list`, `data-send-id`, `data-log-row` / `data-total-row` / `data-log-edit` with `data-kind` + `data-book` on each, and `data-log-add` / `data-total-save` / `data-log-save` / `data-log-remove` on their buttons, `data-log-kind`, `data-grab-from`, `data-chart-toggle`, `data-tip`, `data-select-id`, `data-challenge`, `data-prof-*`). Re-rendering therefore never orphans a listener.
 - **View switching:** each tab is a `.view` div, and the active one has `.active` (CSS `display:block`). Switching tabs moves the class and calls `renderAll()`. The Logs tab has a second level of the same idea: two `.log-panel` divs, one `.active` at a time (§4.3).
 - **Module-level UI state** (not persisted): `selectionMode`, `selectedIds` (Set), `editingId`, `titleHits`, `bulkEntries`, `bulkRawText`, `bulkStopRequested`, `dragSrcId`, `dragDropped`, `chartViewMode`, `librarySort`, `sendBookId`, `coverProbeCache`, `saveCount` and `pendingUndo` (undo, §5.8), `editCoverData` (upload in the open Edit dialog, §5.13), `detailBookId` (§5.14). Search boxes and the series sort are read straight from their inputs at render time.
 
@@ -136,9 +136,9 @@ localStorage["bookTrackerProfiles_v1"]
 | `ownership` | string[] | `[]` | how the book is held (§5.15). Any of `owned-physical`, `owned-ebook`, `owned-audiobook`, `borrowed`, `loaned`, `wishlist`, several at once. Stored in `OWNERSHIP` order; unknown values are dropped. Replaces the older `owned` boolean, which `normalizeOwnership` migrates |
 | `sortIndex` | int | *(absent)* | added by TBR drag-and-drop or ↑/↓ |
 | `topReadRank` | int | *(absent)* | added by Top 5 drag-and-drop or ↑/↓ |
-| `readingLog` | `{date, pages}[]` | `[]` | daily page log (§5.16). One entry per day, oldest first. `normalizeReadingLog` drops bad dates and non-positive counts, and adds same-day entries together (capped at `READING_LOG_MAX` = 5000) |
+| `readingLog` | `{date, pages}[]` | `[]` | daily page log (§5.16). One entry per day, oldest first. `normalizeLog` drops bad dates and non-positive counts, and adds same-day entries together (capped at `READING_LOG_MAX` = 5000) |
 | `audioLength` | int (minutes) \| null | `null` | audiobook running time (§5.17). Clamped to `AUDIO_LENGTH_MAX` = 12000 (200 h); anything non-positive or unparseable becomes `null` |
-| `listenLog` | `{date, minutes}[]` | `[]` | daily listening log (§5.17). The exact twin of `readingLog` with minutes in place of pages, normalized by `normalizeListenLog` the same way (capped at `LISTEN_LOG_MAX` = 1440, one day) |
+| `listenLog` | `{date, minutes}[]` | `[]` | daily listening log (§5.17). The exact twin of `readingLog` with minutes in place of pages, normalized by the same `normalizeLog` (capped at `LISTEN_LOG_MAX` = 1440, one day) |
 
 Both audio fields are kept on *every* book, not only audiobooks, so changing a book's format away from audiobook and back never throws its times away.
 
@@ -427,14 +427,18 @@ differs is gathered in one table and the rest is written once against it.
   and button, and the chart's axis rules. `id` is "Audio" or "Pages", which is also how
   every element on the page is named: `log<Id>Cards`, `log<Id>StatGrid`, and so on, so
   `el(kind, "Cards")` finds the right one.
-- Built on that: `logDone`, `logPace`, `syncLogProgress`, `logFiguresHTML`,
-  `logTotalRowHTML`, `logEntryRowHTML`, `logSummaryHTML`, `logCardHTML`,
-  `renderLogSection`, `logTotalsByDate` and `renderDailyLogChart` — each written once and
-  called twice. The pace table on Pacing (§5.16) reads through the same table.
+- Built on that, each written once and called for either kind: the records
+  (`normalizeLog`, `logEntries`, `logTotal`, `logDone`, `logKindFor`), the edits
+  (`addLogEntry`, `setLogEntry`, `saveLogEdit`, `saveLogTotal`, `syncLogProgress`), the
+  numbers (`logPace`, `logShownDone`), the markup (`logFiguresHTML`, `logTotalRowHTML`,
+  `logEntryRowHTML`, `logSummaryHTML`, `logSectionHTML`, `logCardHTML`) and the views
+  (`renderLogSection`, `logTotalsByDate`, `renderDailyLogChart`). The pace table on Pacing
+  (§5.16) and the reading card built by `bookCardHTML` read through the same table.
 - The one thing that cannot be shared is the inner controls of the two editable rows: a
-  time needs an hours and a minutes box, a page count needs one number box. Both rows emit
-  the `data-*` attributes the existing click and keydown handlers already look for, so the
-  handlers themselves never had to learn about the split.
+  time needs an hours and a minutes box, a page count needs one number box. That single
+  difference is `kind.amountInputs`, read back by `readLogAmount`. Every row carries
+  `data-kind` and `data-book`, so one click branch and one keydown branch per action serve
+  both kinds — the handlers never name a unit.
 - **Minutes and pages are the only stored units.** Hours exist only on screen
   (`formatMinutes`), which keeps every sum a plain addition.
 - **Times are typed as an hours box plus a minutes box** (`hmInputsHTML` / `readHmPair` /
@@ -444,11 +448,11 @@ differs is gathered in one table and the rest is written once against it.
   both boxes are empty, so "left blank" is distinguishable from a deliberate zero. Each box
   and its unit are one `.hm-pair`, so "h" is never stranded on the next line in a narrow
   card; `#logAudioCards` and `#logPagesCards` use a 300px minimum column instead of 220px.
-- **The total is editable from the card**: `saveAudioLength` and its paged twin
-  `savePageCount`. Clearing the box (or zero) removes it, which is how one entered by
-  mistake is taken off again. Out-of-range values are refused rather than clamped, so a
-  mistyped total is never silently turned into a different one.
-- **Logging** (`addLogEntry` / `addListenEntry`): several entries for a day add together,
+- **The total is editable from the card** (`saveLogTotal`). Clearing the box (or zero)
+  removes it, which is how one entered by mistake is taken off again. Out-of-range values
+  are refused rather than clamped, so a mistyped total is never silently turned into a
+  different one.
+- **Logging** (`addLogEntry`): several entries for a day add together,
   and logging a day before `dateStarted` moves the start back. **Progress** follows the log
   through `syncLogProgress` — listened or read ÷ total, capped at 100%, and only ever
   upward. `setLogEntry` / `setListenEntry` apply the one exception: a correction may pull
@@ -653,6 +657,7 @@ Made from `new-features.md` and checked in headless Edge (51 checks, plus the ea
 | F8 | Tabs reorganised into eight | Library first; Currently Reading and Audiobooks merged into a two-sided **Logs** tab generated from one description of the two units; Stats & Pace narrowed to **Pacing** with its library charts moved to Rankings; Discovery folded into TBR (§4.3, §5.17) |
 | F9 | Logs scoped to books in progress | The Logs tab lists only `reading` books, dropping the status filter, the status badge and the start/reread actions; finished logs stay in the chart, the Pacing figures and the detail view (§5.17) |
 | F10 | Ownership categories | `ownership` list replacing the `owned` boolean: owned physical/ebook/audiobook, borrowed, loaned out, wishlist, several at once, with a category sort and filter on Library and a category filter on TBR (§5.15) |
+| F11 | Logs written once | The per-unit pairs (`addLogEntry`/`addListenEntry`, `setLogEntry`/`setListenEntry`, `saveLogEdit`/`saveListenEdit`, `saveAudioLength`/`savePageCount`, the two normalizers, the two detail-view editors) collapse into one code path driven by `LOG_KINDS`, and the eight log `data-*` attributes into four shared ones. No behaviour change beyond a paged reading card on Series now matching the audiobook one (§5.17) |
 
 ### 10.4 Still open
 
