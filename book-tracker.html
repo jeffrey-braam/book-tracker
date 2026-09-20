@@ -113,6 +113,18 @@
   .log-list input[type=number]{width:70px;}
   .log-list .log-controls{display:inline-flex; gap:4px; align-items:center; flex-wrap:wrap; justify-content:flex-end;}
   button.title-link.log-edit-link{display:inline; text-decoration:underline; color:inherit; font-size:inherit;}
+  /* Audiobook times are entered as an hours box plus a minutes box, which are narrower
+     than the single pages box they sit beside, with the unit printed after each. */
+  .log-row input[type=number].hm, .log-list input[type=number].hm{width:52px;}
+  .hm-unit{color:var(--muted); font-size:0.76rem;}
+  /* A box and its unit are one thing, so they wrap as one rather than the "h" being left
+     stranded on the next line in a narrow card. */
+  .hm-pair{display:inline-flex; align-items:center; gap:3px;}
+  .audio-line{font-size:0.78rem; color:var(--muted); margin-top:4px;}
+  .audio-line strong{color:var(--ink);}
+  /* Cards that carry input rows need more room than a card that only displays. That is
+     the Audiobooks tab, and Currently Reading, where the day's reading is logged. */
+  #audioCards, #readingCards{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));}
   .book-card.dragging{opacity:0.4;}
   .priority-tier{margin-bottom:18px;}
   .priority-tier h3{color:var(--muted); text-transform:uppercase; font-size:0.78rem; letter-spacing:0.5px;}
@@ -351,6 +363,7 @@
   <button class="tab-btn" data-view="rankings">Rankings & Favorites</button>
   <button class="tab-btn" data-view="stats">Stats & Pace</button>
   <button class="tab-btn" data-view="discovery">Discovery</button>
+  <button class="tab-btn" data-view="audiobooks">Audiobooks</button>
   <button class="tab-btn" data-view="library">Library</button>
 </div>
 
@@ -580,6 +593,43 @@
   </div>
 </div>
 
+<!-- AUDIOBOOKS VIEW: the same books as every other tab, filtered to format "audiobook",
+     with the two fields only audiobooks have — a running time and a minutes-per-day
+     listening log — edited straight from the card. -->
+<div class="view" id="view-audiobooks">
+  <div class="panel">
+    <div class="series-head" style="margin-bottom:12px;">
+      <h2 style="margin:0;">🎧 Audiobooks</h2>
+      <span class="muted" id="audioCount"></span>
+    </div>
+    <div class="stat-grid" id="audioStatGrid"></div>
+    <div class="filter-row" style="margin-top:16px;">
+      <input type="text" class="toolbar-search" id="audioSearch" placeholder="Search title or author...">
+      <select id="audioStatusFilter" aria-label="Filter by status">
+        <option value="">All statuses</option>
+        <option value="reading">Currently listening</option>
+        <option value="tbr">To Be Read</option>
+        <option value="read">Finished</option>
+        <option value="dnf">Did Not Finish</option>
+      </select>
+    </div>
+    <div class="grid-cards" id="audioCards"></div>
+    <div class="empty-msg" id="audioEmpty" style="display:none;">No audiobooks yet — set a book's Format to “Audiobook” when adding or editing it.</div>
+  </div>
+  <div class="panel">
+    <div class="chart-card" style="margin-bottom:0;">
+      <div class="chart-head">
+        <h3>Time Listened per Day (last 30 days)</h3>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <select id="listenChartBook" aria-label="Which audiobook to chart"></select>
+          <button class="chart-toggle" data-chart-toggle="listen">View as table</button>
+        </div>
+      </div>
+      <div class="chart-body" id="listenChartWrap"></div>
+    </div>
+  </div>
+</div>
+
 <!-- LIBRARY VIEW: every book as a cover grid, with no badges or buttons — a browsing
      view rather than a management one. -->
 <div class="view" id="view-library">
@@ -664,9 +714,18 @@
           <option value="audiobook">Audiobook</option>
         </select>
       </div>
-      <div class="form-row" style="max-width:120px;">
+      <div class="form-row" id="pagesRow" style="max-width:120px;">
         <label>Pages</label>
         <input type="number" id="fieldPages" min="0">
+      </div>
+    </div>
+    <!-- Only meaningful for an audiobook, so it is shown only when that format is chosen.
+         It can also be filled in from the card in the Audiobooks tab. -->
+    <div class="form-row" id="audioLengthRow" style="display:none;">
+      <label for="fieldAudioHours">Audiobook length (running time)</label>
+      <div class="log-row" id="audioLengthInputs" style="margin-top:0;">
+        <span class="hm-pair"><input type="number" class="hm" id="fieldAudioHours" min="0" max="999" placeholder="h" data-hm-h aria-label="Audiobook length — hours"><span class="hm-unit">h</span></span>
+        <span class="hm-pair"><input type="number" class="hm" id="fieldAudioMins" min="0" max="59" placeholder="m" data-hm-m aria-label="Audiobook length — minutes"><span class="hm-unit">m</span></span>
       </div>
     </div>
     <div class="form-row">
@@ -872,6 +931,10 @@
   const COVER_UPLOAD_MAX_W = 300, COVER_UPLOAD_MAX_H = 450;
   // Ceiling on pages logged for one book on one day — a typo guard, not a judgement.
   const READING_LOG_MAX = 5000;
+  // The same guards for audiobooks, in minutes: at most a full day's listening logged
+  // against one day, and a running time of at most 200 hours.
+  const LISTEN_LOG_MAX = 1440;
+  const AUDIO_LENGTH_MAX = 12000;
 
   let store = loadStore();
   let data = activeProfile().data;
@@ -988,6 +1051,7 @@
     const ymdOrNull = v => parseYmd(v) ? v : null;
     const strList = v => (Array.isArray(v) ? v : []).map(str).map(s=>s.trim()).filter(Boolean);
     const pages = parseInt(raw.pages,10);
+    const audioLength = parseInt(raw.audioLength,10);
     const seriesNum = raw.series ? parseFloat(raw.series.num) : NaN;
     const book = makeBook({
       id: str(raw.id) || uid(),
@@ -1014,7 +1078,12 @@
         && COVER_DATA_RE.test(raw.coverData)) ? raw.coverData : "",
       // Missing means owned, so libraries saved before this field existed are unchanged.
       owned: raw.owned !== false,
-      readingLog: normalizeReadingLog(raw.readingLog)
+      readingLog: normalizeReadingLog(raw.readingLog),
+      // Audiobook running time and listening log, both in whole minutes. They are kept on
+      // every book, not only audiobooks, so switching a book's format back and forth
+      // never throws the times away.
+      audioLength: audioLength > 0 ? Math.min(AUDIO_LENGTH_MAX, audioLength) : null,
+      listenLog: normalizeListenLog(raw.listenLog)
     });
     // The two ordering fields only exist once a list has been dragged.
     if(isFinite(parseFloat(raw.sortIndex))) book.sortIndex = parseFloat(raw.sortIndex);
@@ -1033,6 +1102,18 @@
       byDate[e.date] = Math.min(READING_LOG_MAX, (byDate[e.date]||0) + pages);
     });
     return Object.keys(byDate).sort().map(date=>({ date, pages: byDate[date] }));
+  }
+  // The listening log, the minutes-per-day twin of readingLog: same rules, same repair of
+  // a hand-edited file, with minutes in place of pages.
+  function normalizeListenLog(raw){
+    const byDate = {};
+    (Array.isArray(raw) ? raw : []).forEach(e=>{
+      if(!e || typeof e !== "object" || !parseYmd(e.date)) return;
+      const minutes = parseInt(e.minutes,10);
+      if(!(minutes > 0)) return;
+      byDate[e.date] = Math.min(LISTEN_LOG_MAX, (byDate[e.date]||0) + minutes);
+    });
+    return Object.keys(byDate).sort().map(date=>({ date, minutes: byDate[date] }));
   }
   function normalizeChallenge(raw){
     const type = raw.type === "bingo" ? "bingo" : "checklist";
@@ -1081,7 +1162,8 @@
       pages:null, status:"tbr", priority:"someday", progress:0, dateStarted:null,
       dateFinished:null, rating:0, notes:"", dnfReason:"", isTopRead:false,
       isRereadCandidate:false, isReread:false, quotes:[], shelves:[], tags:[],
-      dateAdded: todayStr(), coverData:"", owned:true, readingLog:[]
+      dateAdded: todayStr(), coverData:"", owned:true, readingLog:[],
+      audioLength:null, listenLog:[]
     }, overrides);
   }
 
@@ -1392,8 +1474,10 @@
     $("fieldQuotes").value = (b.quotes||[]).map(q=> q.page ? (q.text+" || "+q.page) : q.text).join("\n");
     $("fieldShelves").value = (b.shelves||[]).join(", ");
     $("fieldTags").value = (b.tags||[]).join(", ");
+    setHmPair($("audioLengthInputs"), b.audioLength);
     $("deleteBookBtn").style.display = book ? "inline-block" : "none";
     updateStatusDependentFields();
+    updateFormatDependentFields();
     overlay.classList.add("active");
   }
   function closeModal(){
@@ -1420,6 +1504,17 @@
     $("quotesRow").style.display = status==="read" ? "" : "none";
   }
   $("fieldStatus").addEventListener("change", updateStatusDependentFields);
+
+  // The running time is the audiobook equivalent of the page count, so the two swap places:
+  // whichever measure the chosen format is counted in is the one on screen. A page count
+  // already recorded is only hidden, never cleared, so it is still there if the format
+  // goes back - the same promise the audio fields make in the other direction.
+  function updateFormatDependentFields(){
+    const isAudio = $("fieldFormat").value === "audiobook";
+    $("audioLengthRow").style.display = isAudio ? "" : "none";
+    $("pagesRow").style.display = isAudio ? "none" : "";
+  }
+  $("fieldFormat").addEventListener("change", updateFormatDependentFields);
 
   // ---------- UPLOADED COVER ----------
   // The upload lives in editCoverData while the dialog is open (a file input can't hold a
@@ -1499,6 +1594,13 @@
     }) : [];
     const shelves = splitList($("fieldShelves").value);
     const tags = splitList($("fieldTags").value);
+    // null when both boxes are empty; anything out of range is refused rather than clamped,
+    // so a mistyped running time is not silently turned into a different one.
+    const audioMins = readHmPair($("audioLengthInputs"));
+    if(audioMins !== null && !(audioMins >= 0 && audioMins <= AUDIO_LENGTH_MAX)){
+      toast(`Audiobook length must be between 0 and ${formatMinutes(AUDIO_LENGTH_MAX)}`);
+      return;
+    }
 
     const existing = editingId ? data.books.find(b=>b.id===editingId) : null;
     // The form's values are laid over the existing record rather than a blank one, so the
@@ -1529,7 +1631,8 @@
       shelves: shelves,
       tags: tags,
       coverData: editCoverData,
-      owned: $("fieldOwned").value !== "wishlist"
+      owned: $("fieldOwned").value !== "wishlist",
+      audioLength: audioMins || null
     }));
 
     if(editingId){
@@ -2558,7 +2661,12 @@
     (book.tags||[]).forEach(t=>badges+=`<span class="badge">${esc(t)}</span>`);
 
     let extra = "";
-    if(book.status==="reading"){
+    if(book.status==="reading" && book.format === "audiobook"){
+      // An audiobook is measured in minutes, so its card offers the listening log in place
+      // of the page log - the same controls the Audiobooks tab uses. Everything else about
+      // the card is unchanged.
+      extra += audioFiguresHTML(book) + listenLogRowHTML(book) + listenLogSummaryHTML(book);
+    } else if(book.status==="reading"){
       extra += `<div class="progress-bar"><div style="width:${book.progress||0}%"></div></div><div class="muted">${book.progress||0}% complete</div>`;
       // Daily page log. The date defaults to today but can be moved back to catch up on a
       // day that was missed; it cannot go into the future.
@@ -2656,7 +2764,7 @@
       else if(action==="finish-reading"){ book.status="read"; book.progress=100; book.dateFinished = todayStr(); saveData(); renderAll(); openModal(book); }
       else if(action==="dnf-reading"){ book.status="dnf"; book.dateFinished = todayStr(); saveData(); renderAll(); openModal(book); }
       else if(action==="reread"){
-        const newBook = Object.assign({}, book, { id: uid(), isReread:true, status:"reading", progress:0, dateStarted: todayStr(), dateFinished:null, notes:"", quotes: (book.quotes||[]).slice(), readingLog: [] });
+        const newBook = Object.assign({}, book, { id: uid(), isReread:true, status:"reading", progress:0, dateStarted: todayStr(), dateFinished:null, notes:"", quotes: (book.quotes||[]).slice(), readingLog: [], listenLog: [] });
         data.books.push(newBook);
         saveData(); renderAll();
         toast("New reread started — track it in Currently Reading");
@@ -2676,6 +2784,20 @@
     if(logDel){
       const book = data.books.find(b=>b.id===logDel.dataset.logRemove);
       if(book) setLogEntry(book, logDel.dataset.logDate, 0);
+      return;
+    }
+    // The same four moves for audiobooks: log a day's listening, save the running time,
+    // correct a logged day, remove one.
+    const listenBtn = e.target.closest("[data-listen-add]");
+    if(listenBtn){ addListenEntry(listenBtn.dataset.listenAdd, listenBtn.closest(".log-row")); return; }
+    const audioLenBtn = e.target.closest("[data-audio-save]");
+    if(audioLenBtn){ saveAudioLength(audioLenBtn.dataset.audioSave, audioLenBtn.closest(".log-row")); return; }
+    const listenSave = e.target.closest("[data-listen-save]");
+    if(listenSave){ saveListenEdit(listenSave.closest("li")); return; }
+    const listenDel = e.target.closest("[data-listen-remove]");
+    if(listenDel){
+      const book = data.books.find(b=>b.id===listenDel.dataset.listenRemove);
+      if(book) setListenEntry(book, listenDel.dataset.logDate, 0);
       return;
     }
     const tierBtn = e.target.closest("[data-tier-move]");
@@ -2714,7 +2836,14 @@
     const input = e.target.closest("[data-log-pages]");
     if(input){ e.preventDefault(); addLogEntry(input.dataset.logPages, input.closest(".log-row")); return; }
     const editInput = e.target.closest("[data-log-edit]");
-    if(editInput){ e.preventDefault(); saveLogEdit(editInput.closest("li")); }
+    if(editInput){ e.preventDefault(); saveLogEdit(editInput.closest("li")); return; }
+    // Enter anywhere in an audiobook row does what that row's button does.
+    const listenRow = e.target.closest(".listen-row");
+    if(listenRow){ e.preventDefault(); addListenEntry(listenRow.dataset.listenRow, listenRow); return; }
+    const lenRow = e.target.closest("[data-audio-len]");
+    if(lenRow){ e.preventDefault(); saveAudioLength(lenRow.dataset.audioLen, lenRow); return; }
+    const listenEditRow = e.target.closest("[data-listen-edit]");
+    if(listenEditRow){ e.preventDefault(); saveListenEdit(listenEditRow.closest("li")); }
   });
 
   // ---------- DAILY PAGE LOG ----------
@@ -2768,6 +2897,277 @@
     setLogEntry(book, input.dataset.logDate, pages);
   }
 
+
+  // ---------- AUDIOBOOK TIMES ----------
+  // Audiobooks are not a separate library: they are the books whose `format` is
+  // "audiobook", and the Audiobooks tab is a view over them. Two fields are theirs alone,
+  // both in whole minutes - `audioLength`, the running time, and `listenLog`, the
+  // minutes-per-day twin of the page log. Minutes are the single stored unit; hours only
+  // ever exist on screen, which keeps every sum a plain addition.
+  function formatMinutes(mins){
+    mins = Math.max(0, Math.round(mins||0));
+    const h = Math.floor(mins/60), m = mins%60;
+    if(!h) return m + "m";
+    return m ? h + "h " + m + "m" : h + "h";
+  }
+  // The hours + minutes pair used everywhere a time is typed. Two boxes rather than one
+  // text field means there is nothing to parse and nothing to get wrong: "1h 20", "1:20"
+  // and "80" cannot be confused with each other because they cannot be typed.
+  function hmInputsHTML(mins, label){
+    const has = mins != null && mins !== "";
+    return `<span class="hm-pair"><input type="number" class="hm" min="0" max="999" placeholder="h" value="${has ? Math.floor(mins/60) : ""}" data-hm-h aria-label="${esc(label)} - hours"><span class="hm-unit">h</span></span>`
+      + `<span class="hm-pair"><input type="number" class="hm" min="0" max="59" placeholder="m" value="${has ? mins%60 : ""}" data-hm-m aria-label="${esc(label)} - minutes"><span class="hm-unit">m</span></span>`;
+  }
+  // Reads one pair back as a single number of minutes. null when both boxes are empty, so
+  // "left blank" can be told apart from a deliberate zero; NaN when either is negative.
+  function readHmPair(scope){
+    const hEl = scope && scope.querySelector("[data-hm-h]"), mEl = scope && scope.querySelector("[data-hm-m]");
+    const hRaw = hEl ? hEl.value.trim() : "", mRaw = mEl ? mEl.value.trim() : "";
+    if(!hRaw && !mRaw) return null;
+    const h = parseInt(hRaw,10) || 0, m = parseInt(mRaw,10) || 0;
+    if(h < 0 || m < 0) return NaN;
+    return h*60 + m;
+  }
+  function setHmPair(scope, mins){
+    const hEl = scope.querySelector("[data-hm-h]"), mEl = scope.querySelector("[data-hm-m]");
+    if(hEl) hEl.value = mins ? Math.floor(mins/60) : "";
+    if(mEl) mEl.value = mins ? mins%60 : "";
+  }
+
+  // Which audiobook the listening chart is showing; "" means all of them together.
+  let listenChartBookId = "";
+  function listenedMinutes(book){
+    return (book.listenLog||[]).reduce((s,e)=>s+e.minutes,0);
+  }
+  function audiobooks(){ return data.books.filter(b=>b.format==="audiobook"); }
+  // Minutes a day since the first entry (today included), and the finish date that rate
+  // projects - the audio twin of the Currently Reading pace row. Null until something is
+  // logged, because a rate needs at least one day to divide by.
+  function listenPace(book){
+    const log = book.listenLog||[];
+    if(!log.length) return null;
+    const listened = listenedMinutes(book);
+    const perDay = listened / (daysBetween(log[0].date, todayStr()) + 1);
+    let finish = "";
+    if(book.status === "read") finish = "finished";
+    else if(!book.audioLength) finish = "";
+    else if(listened >= book.audioLength) finish = "any minute now";
+    else if(perDay > 0) finish = "est. finish " + formatYmd(daysAgoStr(-Math.ceil((book.audioLength - listened) / perDay)));
+    return { perDay, finish };
+  }
+  // Raising `progress` to match the listening log, on exactly the terms the page log uses:
+  // only ever forward, since someone who starts logging halfway through is further along
+  // than the log alone can show.
+  function syncAudioProgress(book){
+    if(!book.audioLength) return;
+    const pct = Math.min(100, Math.round(listenedMinutes(book) / book.audioLength * 100));
+    if(pct > (book.progress||0)) book.progress = pct;
+  }
+
+  // Adds one day's listening from a card's row. Several entries for a day add together,
+  // and logging a day earlier than dateStarted moves the start back, both as pages do.
+  function addListenEntry(id, row){
+    const book = data.books.find(b=>b.id===id);
+    if(!book || !row) return;
+    const minutes = readHmPair(row);
+    const dateEl = row.querySelector("[data-listen-date]");
+    const date = (dateEl && dateEl.value) || todayStr();
+    if(!(minutes >= 1 && minutes <= LISTEN_LOG_MAX)){
+      toast(`Enter a time from 1m to ${formatMinutes(LISTEN_LOG_MAX)}`);
+      const first = row.querySelector("[data-hm-h]");
+      if(first) first.focus();
+      return;
+    }
+    if(!parseYmd(date) || date > todayStr()){ toast("Pick today or an earlier day"); return; }
+    book.listenLog = normalizeListenLog((book.listenLog||[]).concat([{ date, minutes }]));
+    syncAudioProgress(book);
+    if(!book.dateStarted || date < book.dateStarted) book.dateStarted = date;
+    saveData(); renderAll();
+    toast(`Logged ${formatMinutes(minutes)} for “${book.title}”` + (date===todayStr() ? "" : " on " + formatYmd(date)));
+  }
+  // Corrects one day in place (0 removes it). Progress follows a correction down only when
+  // it is sitting exactly where the log put it - see setLogEntry for why.
+  function setListenEntry(book, date, minutes){
+    const pctOf = () => book.audioLength ? Math.min(100, Math.round(listenedMinutes(book) / book.audioLength * 100)) : null;
+    const before = pctOf();
+    const log = (book.listenLog||[]).filter(en=>en.date!==date);
+    if(minutes > 0) log.push({ date, minutes });
+    book.listenLog = normalizeListenLog(log);
+    const after = pctOf();
+    if(before != null && (book.progress||0) === before) book.progress = after;
+    saveData(); renderAll(); openDetail(book);
+    toast(minutes > 0 ? `${formatYmd(date)} updated to ${formatMinutes(minutes)}` : "Log entry removed");
+  }
+  function saveListenEdit(li){
+    const scope = li && li.querySelector("[data-listen-edit]");
+    const book = scope && data.books.find(b=>b.id===scope.dataset.listenEdit);
+    if(!book) return;
+    const minutes = readHmPair(scope);
+    if(!(minutes >= 0 && minutes <= LISTEN_LOG_MAX)){
+      toast(`Enter a time from 0 to ${formatMinutes(LISTEN_LOG_MAX)} (0 removes the day)`);
+      return;
+    }
+    const current = (book.listenLog||[]).find(en=>en.date===scope.dataset.logDate);
+    if(current && current.minutes === minutes){ toast("No change"); return; }
+    setListenEntry(book, scope.dataset.logDate, minutes);
+  }
+  // The running time, saved from the card. Clearing both boxes (or zero) removes it, which
+  // is how a length entered by mistake is taken off again.
+  function saveAudioLength(id, row){
+    const book = data.books.find(b=>b.id===id);
+    if(!book || !row) return;
+    const minutes = readHmPair(row);
+    if(minutes !== null && !(minutes >= 0 && minutes <= AUDIO_LENGTH_MAX)){
+      toast(`Enter a length from 0 to ${formatMinutes(AUDIO_LENGTH_MAX)}`);
+      return;
+    }
+    const next = minutes ? minutes : null;
+    if(next === (book.audioLength||null)){ toast("No change"); return; }
+    book.audioLength = next;
+    syncAudioProgress(book);
+    saveData(); renderAll();
+    toast(next ? `Length set to ${formatMinutes(next)}` : "Length cleared");
+  }
+
+  // The listening pieces of a card, shared by the Currently Reading card and the
+  // Audiobooks tab so the two cannot drift apart.
+  function audioFiguresHTML(book){
+    const total = book.audioLength, listened = listenedMinutes(book);
+    // With a running time the bar is the log's own percentage; without one it falls back
+    // to whatever progress was set by hand, which is then all there is to show.
+    const pct = total ? Math.min(100, Math.round(listened/total*100)) : (book.progress||0);
+    let line;
+    if(total){
+      line = `<strong>${esc(formatMinutes(Math.min(listened,total)))}</strong> of ${esc(formatMinutes(total))} · <strong>${esc(formatMinutes(Math.max(0, total-listened)))}</strong> remaining · ${pct}%`;
+    } else if(listened){
+      line = `<strong>${esc(formatMinutes(listened))}</strong> listened · add a length to see what is left`;
+    } else if(pct){
+      // Nothing logged, but the slider has been moved, so the bar above is not a lie.
+      line = `${pct}% complete · add a length to track it by time`;
+    } else {
+      line = "No length or listening time recorded yet.";
+    }
+    return `<div class="progress-bar"><div style="width:${pct}%"></div></div><div class="audio-line">${line}</div>`;
+  }
+  function listenLogRowHTML(book){
+    const today = todayStr();
+    return `<div class="log-row listen-row" data-listen-row="${esc(book.id)}">
+      <span class="hm-unit">Listened</span>
+      ${hmInputsHTML(null, "Time listened")}
+      <input type="date" value="${today}" max="${today}" aria-label="Day listened" data-listen-date="${esc(book.id)}">
+      <button class="small secondary" data-listen-add="${esc(book.id)}">Log time</button>
+    </div>`;
+  }
+  function listenLogSummaryHTML(book){
+    const days = (book.listenLog||[]).length;
+    if(!days) return "";
+    const today = todayStr();
+    const listenedToday = (book.listenLog||[]).filter(e=>e.date===today).reduce((s,e)=>s+e.minutes,0);
+    return `<div class="audio-line">Today: ${esc(formatMinutes(listenedToday))} · ${days} day${days===1?"":"s"} logged · <button type="button" class="title-link log-edit-link" data-detail-id="${esc(book.id)}">Edit log</button></div>`;
+  }
+
+  // ---------- RENDER: AUDIOBOOKS ----------
+  // One card per audiobook, carrying both of the tab's editable fields: the running time
+  // and today's listening. Unlike bookCardHTML this is not status-shaped - an audiobook is
+  // shown the same way whether it is waiting, in progress or finished, with the numbers
+  // filling in as they become known.
+  const AUDIO_STATUS_ORDER = { reading:0, tbr:1, read:2, dnf:3 };
+  function audiobookCardHTML(book){
+    let badges = `<span class="badge">${esc(book.status==="reading" ? "Listening" : STATUS_LABELS[book.status])}</span>`;
+    if(book.series && book.series.name) badges += `<span class="badge">${esc(book.series.name)}${book.series.num!=null?" #"+book.series.num:""}</span>`;
+    if(book.owned === false) badges += `<span class="badge wishlist">Wishlist</span>`;
+    if(book.isReread) badges += `<span class="badge">Reread</span>`;
+    (book.tags||[]).forEach(t=>badges+=`<span class="badge">${esc(t)}</span>`);
+
+    // Running time, editable in place, so a length can be filled in without opening the
+    // Edit dialog. The same two boxes that dialog uses.
+    const lengthRow = `<div class="log-row" data-audio-len="${esc(book.id)}">
+      <span class="hm-unit">Length</span>
+      ${hmInputsHTML(book.audioLength, "Audiobook length")}
+      <button class="small secondary" data-audio-save="${esc(book.id)}">Save</button>
+    </div>`;
+
+    let figures = audioFiguresHTML(book);
+    const pace = listenPace(book);
+    if(pace) figures += `<div class="audio-line">${esc(formatMinutes(pace.perDay))} a day${pace.finish ? " · " + esc(pace.finish) : ""}</div>`;
+
+    const logRow = listenLogRowHTML(book);
+    const logLine = listenLogSummaryHTML(book);
+
+    let actions = `<button class="small secondary" data-action="edit" data-id="${esc(book.id)}">Edit</button>`;
+    if(book.status==="tbr") actions += `<button class="small" data-action="start-reading" data-id="${esc(book.id)}">Start Listening</button>`;
+    if(book.status==="reading"){
+      actions += `<button class="small" data-action="finish-reading" data-id="${esc(book.id)}">Mark Finished</button>`;
+      actions += `<button class="small secondary" data-action="dnf-reading" data-id="${esc(book.id)}">DNF</button>`;
+    }
+
+    return `<div class="book-card" data-id="${esc(book.id)}">
+      <span class="detail-link" data-detail-id="${esc(book.id)}" title="View details">${coverImg(book,"cover")}</span>
+      <div class="book-info">
+        <button type="button" class="book-title title-link" data-detail-id="${esc(book.id)}">${esc(book.title)}</button>
+        <div class="book-author">${esc(book.author||"Unknown author")}</div>
+        <div class="badge-row">${badges}</div>
+        ${lengthRow}
+        ${figures}
+        ${logRow}
+        ${logLine}
+        <div class="card-actions">${actions}</div>
+      </div>
+    </div>`;
+  }
+
+  function renderAudiobooks(){
+    const search = $("audioSearch").value;
+    const status = $("audioStatusFilter").value;
+    const all = audiobooks();
+    const books = all
+      .filter(b=>(!status || b.status===status) && matchesSearch(b, search))
+      // What is being listened to now comes first; the rest follow their status, then title.
+      .sort((a,b)=>(AUDIO_STATUS_ORDER[a.status]-AUDIO_STATUS_ORDER[b.status]) || a.title.localeCompare(b.title));
+
+    // The tiles sum the whole audiobook collection, not the filtered list - they describe
+    // the shelf, and would be confusing if a search changed them.
+    if(all.length){
+      const totalLen = all.reduce((s,b)=>s+(b.audioLength||0),0);
+      const totalListened = all.reduce((s,b)=>s+listenedMinutes(b),0);
+      const remaining = all.reduce((s,b)=>s + (b.audioLength ? Math.max(0, b.audioLength - listenedMinutes(b)) : 0), 0);
+      const byDate = listenTotalsByDate(all);
+      let last7 = 0;
+      for(let i=0;i<7;i++) last7 += byDate[daysAgoStr(i)]||0;
+      const noLength = all.filter(b=>!b.audioLength).length;
+      const tiles = [
+        {num: all.length, label:"Audiobooks"},
+        {num: formatMinutes(totalLen), label: noLength ? `Total Length · ${noLength} without one` : "Total Length"},
+        {num: formatMinutes(totalListened), label:"Time Listened"},
+        {num: formatMinutes(remaining), label:"Time Remaining"},
+        {num: formatMinutes(last7/7), label:"Time / Day (last 7 days)"}
+      ];
+      $("audioStatGrid").innerHTML = tiles.map(t=>`<div class="stat-tile"><div class="num">${esc(t.num)}</div><div class="label">${esc(t.label)}</div></div>`).join("");
+    } else {
+      $("audioStatGrid").innerHTML = "";
+    }
+    $("audioCount").textContent = all.length
+      ? (books.length === all.length ? `${all.length} audiobook${all.length===1?"":"s"}` : `${books.length} of ${all.length} audiobooks`)
+      : "";
+
+    $("audioCards").innerHTML = books.map(audiobookCardHTML).join("");
+    showEmpty("audioEmpty", !books.length, search || status);
+
+    // The chart's book picker is rebuilt here so it follows books in and out of the
+    // collection; a choice that is no longer an audiobook falls back to "All".
+    const sel = $("listenChartBook");
+    if(!all.some(b=>b.id===listenChartBookId)) listenChartBookId = "";
+    sel.innerHTML = `<option value="">All audiobooks</option>`
+      + all.map(b=>`<option value="${esc(b.id)}">${esc(b.title)}</option>`).join("");
+    sel.value = listenChartBookId;
+  }
+  $("audioSearch").addEventListener("input", renderAudiobooks);
+  $("audioStatusFilter").addEventListener("change", renderAudiobooks);
+  $("listenChartBook").addEventListener("change", (e)=>{
+    listenChartBookId = e.target.value;
+    renderListenChart();
+  });
+
   // ---------- BOOK DETAIL (read-only) ----------
   // Everything about one book in a readable layout: full notes and quotes rather than the
   // card's 120-character excerpt. Rows with no value are left out. The one thing editable
@@ -2790,6 +3190,14 @@
     row("Series", book.series ? book.series.name + (book.series.num!=null ? " #" + book.series.num : "") : "");
     row("Format", book.format ? book.format.charAt(0).toUpperCase() + book.format.slice(1) : "");
     row("Pages", book.pages ? book.pages.toLocaleString() : "");
+    // Audio times are shown for any book that has them, so they are still visible on a
+    // book whose format was later changed away from audiobook.
+    if(book.audioLength || (book.listenLog||[]).length){
+      const listened = listenedMinutes(book);
+      row("Audiobook length", book.audioLength ? formatMinutes(book.audioLength) : "");
+      row("Time listened", listened ? formatMinutes(listened) : "");
+      if(book.audioLength) row("Time remaining", formatMinutes(Math.max(0, book.audioLength - listened)));
+    }
     row("ISBN", book.isbn);
     row("Started", formatYmd(book.dateStarted));
     row("Finished", formatYmd(book.dateFinished));
@@ -2809,6 +3217,17 @@
             <button class="small" data-log-save aria-label="Save pages for ${esc(formatYmd(e.date))}">Save</button>
             <button class="small secondary" data-log-remove="${esc(book.id)}" data-log-date="${esc(e.date)}" aria-label="Remove entry for ${esc(formatYmd(e.date))}">Remove</button></span></li>`).join("")}</ul>
         <p class="muted" style="margin:6px 0 0; font-size:0.78rem;">Change a number and press Save (or Enter) to fix a typo.</p></div>`);
+    }
+    if(book.listenLog && book.listenLog.length){
+      const total = listenedMinutes(book);
+      const days = book.listenLog.length;
+      sections.push(`<div class="detail-section"><h3>Listening log (${esc(formatMinutes(total))} over ${days} day${days===1?"":"s"})</h3>
+        <ul class="log-list">${book.listenLog.slice().reverse().map(e=>
+          `<li><span>${esc(formatYmd(e.date))}</span><span class="log-controls" data-listen-edit="${esc(book.id)}" data-log-date="${esc(e.date)}">
+            ${hmInputsHTML(e.minutes, "Time listened on " + formatYmd(e.date))}
+            <button class="small" data-listen-save aria-label="Save time for ${esc(formatYmd(e.date))}">Save</button>
+            <button class="small secondary" data-listen-remove="${esc(book.id)}" data-log-date="${esc(e.date)}" aria-label="Remove entry for ${esc(formatYmd(e.date))}">Remove</button></span></li>`).join("")}</ul>
+        <p class="muted" style="margin:6px 0 0; font-size:0.78rem;">Change the hours or minutes and press Save (or Enter) to fix a typo. Zero removes the day.</p></div>`);
     }
     if(book.dnfReason) sections.push(`<div class="detail-section"><h3>Reason for dropping</h3><div class="detail-notes">${esc(book.dnfReason)}</div></div>`);
     if(book.notes) sections.push(`<div class="detail-section"><h3>Notes</h3><div class="detail-notes">${esc(book.notes)}</div></div>`);
@@ -3254,6 +3673,21 @@
     }
     const today = todayStr();
     const rows = reading.map(b=>{
+      // An audiobook has no pages to count, so its row is the same three figures measured
+      // in time instead. The h/m in its cells is what tells the two kinds of row apart.
+      if(b.format === "audiobook"){
+        const listened = listenedMinutes(b);
+        const pace = listenPace(b);
+        let finish = "—";
+        if(b.audioLength && listened >= b.audioLength) finish = "Any minute now";
+        else if(b.audioLength && pace && pace.perDay > 0) finish = formatYmd(daysAgoStr(-Math.ceil((b.audioLength - listened) / pace.perDay)));
+        return `<tr>
+          <td>${esc(b.title)}</td>
+          <td class="num-col">${b.audioLength ? esc(formatMinutes(Math.min(listened, b.audioLength)) + " / " + formatMinutes(b.audioLength)) : (listened ? esc(formatMinutes(listened)) : "—")}</td>
+          <td class="num-col">${pace ? esc(formatMinutes(pace.perDay)) : "—"}</td>
+          <td class="num-col">${esc(finish)}</td>
+        </tr>`;
+      }
       const logged = loggedPages(b);
       const log = b.readingLog||[];
       const rate = log.length ? logged / (daysBetween(log[0].date, today) + 1) : 0;
@@ -3268,10 +3702,13 @@
         <td class="num-col">${esc(finish)}</td>
       </tr>`;
     }).join("");
+    // Both hints ask about whichever measure each book is counted in.
+    const hasLog = b => b.format === "audiobook" ? (b.listenLog||[]).length : (b.readingLog||[]).length;
+    const hasTotal = b => b.format === "audiobook" ? b.audioLength : b.pages;
     const hints = [];
-    if(!reading.some(b=>(b.readingLog||[]).length)) hints.push("Log the pages you read each day from a book's card in Currently Reading to see its pace and finish date.");
-    else if(reading.some(b=>!b.pages)) hints.push("Add a page count to a book to get its finish date.");
-    wrap.innerHTML = `<div class="chart-scroll"><table class="chart-table"><thead><tr><th>Book</th><th class="num-col">Pages read</th><th class="num-col">Pages / day</th><th class="num-col">Est. finish</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    if(!reading.some(hasLog)) hints.push("Log the pages you read, or the time you listen, each day from a book's card in Currently Reading to see its pace and finish date.");
+    else if(reading.some(b=>!hasTotal(b))) hints.push("Add a page count, or an audiobook length, to a book to get its finish date.");
+    wrap.innerHTML = `<div class="chart-scroll"><table class="chart-table"><thead><tr><th>Book</th><th class="num-col">Read / listened</th><th class="num-col">Per day</th><th class="num-col">Est. finish</th></tr></thead><tbody>${rows}</tbody></table></div>`
       + hints.map(h=>`<p class="muted" style="margin-bottom:0;">${esc(h)}</p>`).join("");
   }
 
@@ -3307,7 +3744,7 @@
   // ---------- CHARTS ----------
   // Every chart here reads from "read" books only (first reads, not rereads) — see the
   // note above the panels. Each chart has a table-view twin toggled via chartViewMode.
-  const chartViewMode = { fiction:"chart", pagerange:"chart", genre:"chart", monthly:"chart", daily:"chart" };
+  const chartViewMode = { fiction:"chart", pagerange:"chart", genre:"chart", monthly:"chart", daily:"chart", listen:"chart" };
 
   function chartsReadBooks(){
     return data.books.filter(b=>b.status==="read" && !b.isReread);
@@ -3353,6 +3790,7 @@
     renderMonthlyPagesChart();
     renderReadingPace();
     renderDailyPagesChart();
+    renderListenChart();
   }
 
   // ---- 1. Fiction vs Nonfiction (segmented bar — a 2-slice pie reads as one number, so this reads as a %) ----
@@ -3650,6 +4088,87 @@
         ${xLabels}
         ${hits}
       </svg></div>`;
+  }
+
+
+  // ---- 6. Time listened per day (line, last 30 days, from the listening log) ----
+  // The audio twin of the pages-per-day chart, drawn as a line because a time series with
+  // a running time behind it reads as a trend rather than as thirty separate totals.
+  // It charts every audiobook together, or one on its own when the picker names one.
+  function listenTotalsByDate(books){
+    const byDate = {};
+    books.forEach(b=>(b.listenLog||[]).forEach(e=>{ byDate[e.date] = (byDate[e.date]||0) + e.minutes; }));
+    return byDate;
+  }
+  // A y-axis top that divides into four clean times, so the ticks read "30m", "1h",
+  // "1h 30m" rather than whatever a round number of minutes happens to give.
+  function niceTimeMax(v){
+    const steps = [5,10,15,20,30,45,60,90,120,180,240,360,480,720];
+    for(const step of steps){ if(step*4 >= v) return step*4; }
+    return Math.ceil(v/240)*240;
+  }
+  function renderListenChart(){
+    const wrap = $("listenChartWrap");
+    const all = audiobooks();
+    const chosen = listenChartBookId ? all.filter(b=>b.id===listenChartBookId) : all;
+    const byDate = listenTotalsByDate(chosen);
+    const series = [];
+    for(let i=29; i>=0; i--){ const key = daysAgoStr(i); series.push({ key, minutes: byDate[key]||0 }); }
+    if(!series.some(p=>p.minutes)){
+      wrap.innerHTML = `<div class="chart-empty">No listening time logged in the last 30 days${listenChartBookId ? " for this audiobook" : ""}. Log it from a card above.</div>`;
+      return;
+    }
+    const dayLabel = key => parseYmd(key).toLocaleDateString(undefined, { month:"short", day:"numeric" });
+
+    if(chartViewMode.listen==="table"){
+      const rows = series.filter(p=>p.minutes).reverse();
+      wrap.innerHTML = `<table class="chart-table"><thead><tr><th>Day</th><th class="num-col">Time listened</th></tr></thead><tbody>
+        ${rows.map(p=>`<tr><td>${esc(formatYmd(p.key))}</td><td class="num-col">${esc(formatMinutes(p.minutes))}</td></tr>`).join("")}
+      </tbody></table>`;
+      return;
+    }
+
+    const yMax = niceTimeMax(Math.max(...series.map(p=>p.minutes), 1));
+    const stepX = 18;
+    const leftPad = 62, rightPad = 24, topPad = 14, bottomPad = 28, plotH = 150;
+    const plotW = (series.length-1) * stepX;
+    const width = plotW + leftPad + rightPad;
+    const height = plotH + topPad + bottomPad;
+    const xAt = i => leftPad + i*stepX;
+    const yAt = v => topPad + plotH - (v/yMax)*plotH;
+
+    const yTicks = [0, yMax*0.25, yMax*0.5, yMax*0.75, yMax];
+    const gridSvg = yTicks.map(t=>`<line class="grid-line" x1="${leftPad}" x2="${width-rightPad}" y1="${yAt(t)}" y2="${yAt(t)}"></line><text x="${leftPad-8}" y="${yAt(t)+4}" text-anchor="end">${esc(formatMinutes(t))}</text>`).join("");
+
+    const linePoints = series.map((p,i)=>`${xAt(i)},${yAt(p.minutes)}`).join(" ");
+    const areaPoints = `${xAt(0)},${yAt(0)} ` + linePoints + ` ${xAt(series.length-1)},${yAt(0)}`;
+
+    // A dot on each day that has something logged, so a single day's listening surrounded
+    // by silence is still visible where the line alone would be flat.
+    let dots = "", hits = "", xLabels = "";
+    series.forEach((p,i)=>{
+      if(p.minutes) dots += `<circle cx="${xAt(i)}" cy="${yAt(p.minutes)}" r="2.5" fill="var(--series-1)"></circle>`;
+      hits += `<circle cx="${xAt(i)}" cy="${yAt(p.minutes)}" r="9" fill="transparent" data-tip="${esc(dayLabel(p.key) + ": " + formatMinutes(p.minutes))}"></circle>`;
+      if(i % 7 === 1 || i === series.length-1){
+        xLabels += `<text x="${xAt(i)}" y="${height-8}" text-anchor="middle">${i === series.length-1 ? "Today" : esc(dayLabel(p.key))}</text>`;
+      }
+    });
+    const last = series[series.length-1];
+    const endMarker = `<circle cx="${xAt(series.length-1)}" cy="${yAt(last.minutes)}" r="4" fill="var(--series-1)" stroke="var(--chart-surface)" stroke-width="2"></circle>
+      <text x="${xAt(series.length-1)}" y="${yAt(last.minutes)-10}" text-anchor="end" class="val-label">${esc(formatMinutes(last.minutes))}</text>`;
+
+    const total = series.reduce((s,p)=>s+p.minutes,0);
+    wrap.innerHTML = `<div class="chart-scroll"><svg class="chart-svg" viewBox="0 0 ${width} ${height}" style="width:${width}px; height:${height}px; min-width:100%;">
+        ${gridSvg}
+        <line class="axis-line" x1="${leftPad}" x2="${width-rightPad}" y1="${topPad+plotH}" y2="${topPad+plotH}"></line>
+        <polygon points="${areaPoints}" fill="var(--series-1)" fill-opacity="0.1" stroke="none"></polygon>
+        <polyline points="${linePoints}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline>
+        ${dots}
+        ${endMarker}
+        ${xLabels}
+        ${hits}
+      </svg></div>
+      <p class="muted" style="margin-bottom:0;">${esc(formatMinutes(total))} over the last 30 days · ${esc(formatMinutes(total/30))} a day.</p>`;
   }
 
   // Discovery: ways of choosing what to read next. "Pick for me" builds a weighted list
@@ -4023,7 +4542,7 @@
     return makeBook({
       isbn: book.isbn, title: book.title, author: book.author, cover: book.cover, coverData: book.coverData,
       series: book.series ? Object.assign({}, book.series) : null,
-      format: book.format, pages: book.pages,
+      format: book.format, pages: book.pages, audioLength: book.audioLength,
       status: "tbr", priority: "someday",
       shelves: (book.shelves||[]).slice(), tags: (book.tags||[]).slice(),
       notes: fromName ? ("From " + fromName) : ""
@@ -4125,6 +4644,7 @@
     renderReading();
     renderRead();
     renderDnf();
+    renderAudiobooks();
     renderSeries();
     renderRankings();
     renderStats();
