@@ -135,6 +135,12 @@
   .subtab-btn.active{color:var(--accent); border-bottom-color:var(--accent);}
   .log-panel{display:none;}
   .log-panel.active{display:block;}
+  /* The ownership checkboxes in the Add/Edit dialog, and the category line the Library
+     grows when it is sorted by category. */
+  .check-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:6px 14px; font-size:0.82rem;}
+  .check-grid label{display:flex; gap:6px; align-items:center; font-weight:normal; color:var(--ink);}
+  .check-grid input[type=checkbox]{width:auto;}
+  .library-cat{font-size:0.68rem; color:var(--muted); line-height:1.3;}
   .priority-tier{margin-bottom:18px;}
   .priority-tier h3{color:var(--muted); text-transform:uppercase; font-size:0.78rem; letter-spacing:0.5px;}
   /* Pop-up dialogs (Add/Edit Book, Bulk Import). The overlay covers the whole screen and
@@ -385,9 +391,11 @@
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <span class="muted" id="libraryCount"></span>
         <input type="text" id="librarySearch" placeholder="Search title or author..." aria-label="Search library">
+        <select id="libraryOwnershipFilter" aria-label="Filter by ownership category"></select>
         <select id="librarySort">
           <option value="title">Sort: Title A–Z</option>
           <option value="author">Sort: Author A–Z</option>
+          <option value="ownership">Sort: Category</option>
         </select>
       </div>
     </div>
@@ -508,11 +516,7 @@
     <div class="filter-row">
       <input type="text" class="toolbar-search" id="tbrSearch" placeholder="Search title or author...">
       <select id="tbrShelfFilter"><option value="">All shelves</option></select>
-      <select id="tbrOwnedFilter" aria-label="Owned or wishlist">
-        <option value="">Owned + wishlist</option>
-        <option value="owned">Owned only</option>
-        <option value="wishlist">Wishlist only</option>
-      </select>
+      <select id="tbrOwnershipFilter" aria-label="Filter by ownership category"></select>
       <select id="tbrGenreFilter"><option value="">All genres/moods</option></select>
       <button class="secondary small" id="pickForMeFromTbrBtn">🎲 Pick for me</button>
     </div>
@@ -750,12 +754,11 @@
         <option value="someday">Someday</option>
       </select>
     </div>
-    <div class="form-row" id="ownedRow">
-      <label for="fieldOwned">Owned or wishlist</label>
-      <select id="fieldOwned">
-        <option value="owned">Owned</option>
-        <option value="wishlist">Wishlist (want to get)</option>
-      </select>
+    <!-- A book can be in several of these at once, so they are checkboxes rather than a
+         select. The list itself is built from OWNERSHIP when the page loads. -->
+    <div class="form-row" id="ownershipRow">
+      <label>Ownership</label>
+      <div class="check-grid" id="ownershipChecks"></div>
     </div>
     <div class="form-row" id="progressRow" style="display:none;">
       <label>Progress % <span id="progressVal">0%</span></label>
@@ -799,7 +802,7 @@
       <textarea id="fieldQuotes" rows="3" placeholder="A quote goes here || 42"></textarea>
     </div>
     <div class="form-row">
-      <label>Shelves (comma-separated, e.g. owned-unread, loaned-out)</label>
+      <label>Shelves (comma-separated, e.g. signed, to-replace)</label>
       <input type="text" id="fieldShelves">
     </div>
     <div class="form-row">
@@ -935,6 +938,39 @@
   const COVER_DATA_MAX = 200000;
   const COVER_DATA_RE = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+\/=]+$/;
   const COVER_UPLOAD_MAX_W = 300, COVER_UPLOAD_MAX_H = 450;
+  // How a book is held. A book can be in several of these at once — owning the hardback
+  // and the audiobook, or owning a copy that is currently lent out — so this is a list
+  // rather than a single choice. The order is the one the categories are listed, offered
+  // and sorted in, and it is the only place that order is written down.
+  const OWNERSHIP = [
+    { key:"owned-physical",  label:"Owned " + "—" + " physical" },
+    { key:"owned-ebook",     label:"Owned " + "—" + " ebook" },
+    { key:"owned-audiobook", label:"Owned " + "—" + " audiobook" },
+    { key:"borrowed",        label:"Borrowed" },
+    { key:"loaned",          label:"Loaned out" },
+    { key:"wishlist",        label:"Wishlist" }
+  ];
+  const OWNERSHIP_KEYS = OWNERSHIP.map(o=>o.key);
+  const ownershipLabel = key => (OWNERSHIP.find(o=>o.key===key)||{}).label || key;
+  function ownershipList(book){ return book.ownership || []; }
+  function ownershipText(book){ return ownershipList(book).map(ownershipLabel).join(", "); }
+  // Sorting by category means sorting by the first category a book is in, in the order
+  // above; a book in none of them sorts last rather than leading with a blank.
+  function ownershipRank(book){
+    const list = ownershipList(book);
+    for(let i=0;i<OWNERSHIP_KEYS.length;i++) if(list.includes(OWNERSHIP_KEYS[i])) return i;
+    return OWNERSHIP_KEYS.length;
+  }
+  // One matcher for both category filters. "owned-any" covers all three owned forms, and
+  // "none" finds the books no category has been chosen for yet.
+  function matchesOwnership(book, value){
+    if(!value) return true;
+    const list = ownershipList(book);
+    if(value === "owned-any") return list.some(k=>k.indexOf("owned-") === 0);
+    if(value === "none") return !list.length;
+    return list.includes(value);
+  }
+
   // Ceiling on pages logged for one book on one day — a typo guard, not a judgement.
   const READING_LOG_MAX = 5000;
   // The same guards for audiobooks, in minutes: at most a full day's listening logged
@@ -1082,8 +1118,7 @@
       // (the book then falls back to its remote cover URL or the placeholder).
       coverData: (typeof raw.coverData === "string" && raw.coverData.length <= COVER_DATA_MAX
         && COVER_DATA_RE.test(raw.coverData)) ? raw.coverData : "",
-      // Missing means owned, so libraries saved before this field existed are unchanged.
-      owned: raw.owned !== false,
+      ownership: normalizeOwnership(raw),
       readingLog: normalizeReadingLog(raw.readingLog),
       // Audiobook running time and listening log, both in whole minutes. They are kept on
       // every book, not only audiobooks, so switching a book's format back and forth
@@ -1095,6 +1130,23 @@
     if(isFinite(parseFloat(raw.sortIndex))) book.sortIndex = parseFloat(raw.sortIndex);
     if(isFinite(parseFloat(raw.topReadRank))) book.topReadRank = parseFloat(raw.topReadRank);
     return book;
+  }
+  // Ownership arrives either as the list this version writes, or as the older true/false
+  // `owned` flag, which said whether a book was owned but not in what form. The format is
+  // the best evidence for that, so an owned book is migrated to the matching owned
+  // category and a not-owned one to the wishlist. A book with neither field stays
+  // uncategorised rather than being claimed as owned on no evidence.
+  function normalizeOwnership(raw){
+    if(Array.isArray(raw.ownership)){
+      const seen = raw.ownership.map(v=>String(v));
+      return OWNERSHIP_KEYS.filter(k=>seen.includes(k));
+    }
+    if(raw.owned === false) return ["wishlist"];
+    if(raw.owned === true){
+      const byFormat = { audiobook:"owned-audiobook", ebook:"owned-ebook" };
+      return [byFormat[raw.format] || "owned-physical"];
+    }
+    return [];
   }
   // The daily page log: one {date, pages} entry per calendar day, oldest first. Entries
   // with a bad date or a non-positive count are dropped, and two entries for the same day
@@ -1168,7 +1220,7 @@
       pages:null, status:"tbr", priority:"someday", progress:0, dateStarted:null,
       dateFinished:null, rating:0, notes:"", dnfReason:"", isTopRead:false,
       isRereadCandidate:false, isReread:false, quotes:[], shelves:[], tags:[],
-      dateAdded: todayStr(), coverData:"", owned:true, readingLog:[],
+      dateAdded: todayStr(), coverData:"", ownership:[], readingLog:[],
       audioLength:null, listenLog:[]
     }, overrides);
   }
@@ -1467,7 +1519,7 @@
     $("fieldPages").value = b.pages!=null ? b.pages : "";
     $("fieldStatus").value = book ? book.status : "tbr";
     $("fieldPriority").value = book ? (book.priority||"someday") : "next";
-    $("fieldOwned").value = (book && book.owned === false) ? "wishlist" : "owned";
+    setOwnershipChecks(b.ownership || []);
     $("fieldProgress").value = b.progress||0;
     $("progressVal").textContent = (b.progress||0) + "%";
     $("fieldDateStarted").value = b.dateStarted||"";
@@ -1501,7 +1553,8 @@
   function updateStatusDependentFields(){
     const status = $("fieldStatus").value;
     $("priorityRow").style.display = status==="tbr" ? "" : "none";
-    // Ownership applies whatever the status (a book can be read yet not owned), so its row is always shown.
+    // Ownership applies whatever the status (a book can be read yet not owned, or owned
+    // and never started), so its row is always shown.
     $("progressRow").style.display = status==="reading" ? "" : "none";
     $("datesRow").style.display = (status==="read"||status==="dnf") ? "" : "none";
     $("ratingRow").style.display = status==="read" ? "" : "none";
@@ -1522,6 +1575,38 @@
     $("pagesRow").style.display = isAudio ? "none" : "";
   }
   $("fieldFormat").addEventListener("change", updateFormatDependentFields);
+
+  // ---------- OWNERSHIP FILTERS ----------
+  // The TBR and Library filters offer the same choices, built from OWNERSHIP once so they
+  // cannot fall out of step: everything, any owned form, each category, and the books no
+  // category has been chosen for.
+  function fillOwnershipFilter(sel){
+    const current = sel.value;
+    sel.innerHTML = `<option value="">All categories</option>`
+      + `<option value="owned-any">Owned (any form)</option>`
+      + OWNERSHIP.map(o=>`<option value="${esc(o.key)}">${esc(o.label)}</option>`).join("")
+      + `<option value="none">No category yet</option>`;
+    sel.value = current;
+    if(sel.selectedIndex < 0) sel.value = "";
+  }
+  fillOwnershipFilter($("tbrOwnershipFilter"));
+  fillOwnershipFilter($("libraryOwnershipFilter"));
+  $("libraryOwnershipFilter").addEventListener("change", renderLibrary);
+
+  // ---------- OWNERSHIP CHECKBOXES ----------
+  // Built once from OWNERSHIP, so adding a category there is the only edit needed.
+  $("ownershipChecks").innerHTML = OWNERSHIP.map(o=>
+    `<label><input type="checkbox" value="${esc(o.key)}" data-ownership>${esc(o.label)}</label>`).join("");
+  function setOwnershipChecks(list){
+    document.querySelectorAll("#ownershipChecks [data-ownership]").forEach(cb=>{
+      cb.checked = (list||[]).includes(cb.value);
+    });
+  }
+  function readOwnershipChecks(){
+    const picked = [...document.querySelectorAll("#ownershipChecks [data-ownership]")]
+      .filter(cb=>cb.checked).map(cb=>cb.value);
+    return OWNERSHIP_KEYS.filter(k=>picked.includes(k));
+  }
 
   // ---------- UPLOADED COVER ----------
   // The upload lives in editCoverData while the dialog is open (a file input can't hold a
@@ -1638,7 +1723,7 @@
       shelves: shelves,
       tags: tags,
       coverData: editCoverData,
-      owned: $("fieldOwned").value !== "wishlist",
+      ownership: readOwnershipChecks(),
       audioLength: audioMins || null
     }));
 
@@ -2663,7 +2748,7 @@
     if(book.isReread) badges += `<span class="badge">Reread</span>`;
     // Wishlist badge: always on a TBR book, and on a finished book only where the Read tab
     // asks for it (opts.wishlistBadge) — elsewhere a read book's ownership isn't flagged.
-    if(book.owned === false && (book.status==="tbr" || opts.wishlistBadge)) badges += `<span class="badge wishlist">Wishlist</span>`;
+    if(ownershipList(book).includes("wishlist") && (book.status==="tbr" || opts.wishlistBadge)) badges += `<span class="badge wishlist">Wishlist</span>`;
     (book.shelves||[]).forEach(s=>badges+=`<span class="badge">${esc(s)}</span>`);
     (book.tags||[]).forEach(t=>badges+=`<span class="badge">${esc(t)}</span>`);
 
@@ -3185,7 +3270,7 @@
     let badges = "";
     if(book.series && book.series.name) badges += `<span class="badge">${esc(book.series.name)}${book.series.num!=null?" #"+book.series.num:""}</span>`;
     if(kind === LOG_KINDS.pages) badges += `<span class="badge">${esc(book.format||"physical")}</span>`;
-    if(book.owned === false) badges += `<span class="badge wishlist">Wishlist</span>`;
+    if(ownershipList(book).includes("wishlist")) badges += `<span class="badge wishlist">Wishlist</span>`;
     if(book.isReread) badges += `<span class="badge">Reread</span>`;
     (book.tags||[]).forEach(t=>badges+=`<span class="badge">${esc(t)}</span>`);
 
@@ -3296,7 +3381,7 @@
     const row = (label, value) => { if(value !== "" && value != null) rows.push(`<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`); };
     row("Status", STATUS_LABELS[book.status]);
     if(book.status === "tbr") row("Priority", book.priority === "someday" ? "Someday" : "Up Next");
-    row("Ownership", book.owned === false ? "Wishlist" : "Owned");
+    row("Ownership", ownershipText(book));
     if(book.status === "reading") row("Progress", (book.progress||0) + "%");
     if(book.status === "read") row("Rating", book.rating ? starStr(book.rating) : "Unrated");
     row("Series", book.series ? book.series.name + (book.series.num!=null ? " #" + book.series.num : "") : "");
@@ -3506,13 +3591,13 @@
     // that no longer exists (e.g. it belonged to the previous profile) falls back to "All".
     const shelfFilter = fillFilterSelect($("tbrShelfFilter"), "All shelves", allValues("shelves"));
     const tagFilter = fillFilterSelect($("tbrGenreFilter"), "All genres/moods", allValues("tags"));
-    const ownedFilter = $("tbrOwnedFilter").value;
+    const ownedFilter = $("tbrOwnershipFilter").value;
 
     let tbrBooks = data.books.filter(b=>b.status==="tbr");
     tbrBooks = tbrBooks.filter(b=>matchesSearch(b, search));
     if(shelfFilter) tbrBooks = tbrBooks.filter(b=>(b.shelves||[]).includes(shelfFilter));
     if(tagFilter) tbrBooks = tbrBooks.filter(b=>(b.tags||[]).includes(tagFilter));
-    if(ownedFilter) tbrBooks = tbrBooks.filter(b=> ownedFilter === "wishlist" ? b.owned === false : b.owned !== false);
+    tbrBooks = tbrBooks.filter(b=>matchesOwnership(b, ownedFilter));
     tbrBooks.sort((a,b)=>(a.sortIndex||0)-(b.sortIndex||0));
 
     const nextUpBooks = nextUpSuggestions();
@@ -3543,7 +3628,7 @@
   $("tbrSearch").addEventListener("input", renderTBR);
   $("tbrShelfFilter").addEventListener("change", renderTBR);
   $("tbrGenreFilter").addEventListener("change", renderTBR);
-  $("tbrOwnedFilter").addEventListener("change", renderTBR);
+  $("tbrOwnershipFilter").addEventListener("change", renderTBR);
 
   // The result is drawn right here on the TBR tab; the Discovery panel is not visible from it.
   $("pickForMeFromTbrBtn").addEventListener("click", ()=>pickForMe("tbrPickResult"));
@@ -4378,6 +4463,8 @@
   let librarySort = "title";
   const LIBRARY_SORTERS = {
     title: (a,b)=>(a.title||"").localeCompare(b.title||""),
+    // By the first category a book is in (see ownershipRank), then by title within it.
+    ownership: (a,b)=>ownershipRank(a) - ownershipRank(b) || (a.title||"").localeCompare(b.title||""),
     // Group an author's books together, then order them by title within that group.
     // Books with no author listed go last rather than leading with a blank.
     author: (a,b)=>{
@@ -4389,18 +4476,23 @@
   };
   function renderLibrary(){
     const search = $("librarySearch").value;
+    const category = $("libraryOwnershipFilter").value;
     const total = data.books.length;
-    const books = data.books.filter(b=>matchesSearch(b, search))
+    const books = data.books.filter(b=>matchesSearch(b, search) && matchesOwnership(b, category))
       .sort(LIBRARY_SORTERS[librarySort] || LIBRARY_SORTERS.title);
     // While searching, the count says how many of the whole library matched.
     $("libraryCount").textContent = !total ? ""
       : (books.length === total ? `${total} book${total!==1?"s":""}` : `${books.length} of ${total} books`);
+    // The browsing view is deliberately bare, so the category is spelled out only when it
+    // is what the grid is ordered by - otherwise the order would have no visible reason.
+    const showCat = librarySort === "ownership";
     $("libraryGrid").innerHTML = books.map(b=>`<div class="library-item">
       <span class="detail-link" data-detail-id="${esc(b.id)}" title="View details">${coverImg(b,"cover")}</span>
       <button type="button" class="library-title title-link" data-detail-id="${esc(b.id)}">${esc(b.title)}</button>
       <div class="library-author">${esc(b.author||"")}</div>
+      ${showCat ? `<div class="library-cat">${esc(ownershipText(b) || "No category")}</div>` : ""}
     </div>`).join("");
-    showEmpty("libraryEmpty", !books.length, search);
+    showEmpty("libraryEmpty", !books.length, search || category);
   }
   $("librarySort").addEventListener("change", (e)=>{
     librarySort = e.target.value;

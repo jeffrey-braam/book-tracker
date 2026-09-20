@@ -133,7 +133,7 @@ localStorage["bookTrackerProfiles_v1"]
 | `shelves` | string[] | `[]` | TBR shelf filter, badges |
 | `tags` | string[] | `[]` | genre/mood; charts, mood picks, recs |
 | `dateAdded` | `YYYY-MM-DD` | today | kept across edits |
-| `owned` | bool | `true` | `false` = wishlist (§5.15). Anything but an explicit `false` normalizes to `true`, so older data reads as owned |
+| `ownership` | string[] | `[]` | how the book is held (§5.15). Any of `owned-physical`, `owned-ebook`, `owned-audiobook`, `borrowed`, `loaned`, `wishlist`, several at once. Stored in `OWNERSHIP` order; unknown values are dropped. Replaces the older `owned` boolean, which `normalizeOwnership` migrates |
 | `sortIndex` | int | *(absent)* | added by TBR drag-and-drop or ↑/↓ |
 | `topReadRank` | int | *(absent)* | added by Top 5 drag-and-drop or ↑/↓ |
 | `readingLog` | `{date, pages}[]` | `[]` | daily page log (§5.16). One entry per day, oldest first. `normalizeReadingLog` drops bad dates and non-positive counts, and adds same-day entries together (capped at `READING_LOG_MAX` = 5000) |
@@ -182,7 +182,7 @@ Used in the TBR, Reading, Read, DNF, Series, Mood Picks, and Recommendations lis
 
 - 56×80 cover or a text placeholder (first 20 chars of the title).
 - Title, author ("Unknown author" if blank).
-- Badges: series + number, format, *Next Up* (gold), *★ Top Read* (gold), *Reread*, *Wishlist* (dashed accent outline; books with `owned: false` that are either on the TBR, wherever the card appears, or shown on the Read tab), each shelf, each tag.
+- Badges: series + number, format, *Next Up* (gold), *★ Top Read* (gold), *Reread*, *Wishlist* (dashed accent outline; books in the `wishlist` category that are either on the TBR, wherever the card appears, or shown on the Read tab), each shelf, each tag.
 - Cover: the uploaded `coverData` if present, otherwise `cover`, otherwise the placeholder.
 - Status extras: progress bar and the **Log pages** row (reading, §5.16), stars and notes excerpt (read), "Dropped: reason" (dnf).
 - Actions by status:
@@ -216,11 +216,11 @@ opens on.
 
 | Tab | Contents |
 |---|---|
-| **Library** | Cover-grid browse view of every book (2:3 covers, title, author, no action buttons; cover or title opens the detail view). Search (title/author). Sort by title or by author, with authorless books last. Shows a book count, or "N of M books" while searching. |
+| **Library** | Cover-grid browse view of every book (2:3 covers, title, author, no action buttons; cover or title opens the detail view). Search (title/author), an ownership-category filter, and sort by title, by author (authorless last) or by category (§5.15). Sorting by category also prints each book's categories under its author, so the order has a visible reason. Shows a book count, or "N of M books" while searching. |
 | **Read** | Search, sort (newest/oldest finished, highest rated, title A–Z), "Rereads only" checkbox, then cards with status `read`. |
 | **Logs** | The day-to-day tracker, split into two **sub-tabs** — 🎧 *Audiobooks* and 📖 *Books* — because the two kinds of book are counted in different units. Each side shows only books with status `reading`: five stat tiles over what is in progress, search, one card per book (editable total, amount done and left, a log row, the day's entry) and its own per-day line chart with a per-book picker and a "View as table" toggle. Both sides are generated from the same code (§5.17). |
 | **Pacing** | "‹year› reading goal" number box + **Save goal** (Enter also saves), the stat tiles (led by the goal tile when a goal is set, then the page-log tiles once anything is logged), and the **Currently Reading Pace** table (§5.16). No charts — the ones that describe the library live on Rankings. |
-| **TBR & Discovery** | *Next Up Suggestions* panel (shown only if any). Search, shelf filter, owned filter, genre/mood filter, 🎲 Pick for me (result under the toolbar). Two draggable tiers, **Up Next** and **Someday**, ordered by `sortIndex`. Then 🌙 Mood-Based Picks, 👥 Compare With Another Profile, ✨ Recommended For You and 🎯 Reading Challenges. |
+| **TBR & Discovery** | *Next Up Suggestions* panel (shown only if any). Search, shelf filter, ownership-category filter, genre/mood filter, 🎲 Pick for me (result under the toolbar). Two draggable tiers, **Up Next** and **Someday**, ordered by `sortIndex`. Then 🌙 Mood-Based Picks, 👥 Compare With Another Profile, ✨ Recommended For You and 🎯 Reading Challenges. |
 | **DNF** | Search (title/author), then cards with status `dnf`. |
 | **Series %** | Sort select: Name A–Z (default), Closest to complete, Next Up available first (§5.10). One card per series: read count / total, % bar, Next Up badge, member books sorted by number. |
 | **Rankings** | Two-column grid: 🏆 Top 5 Reads (drag, or ↑/↓ on each row), 🔁 Reread Candidates, ✍️ Top Authors (top 10), 📖 Top Series (top 10). Then 💬 Favorite Quotes, and the four charts that describe the library rather than the pace: Fiction vs Nonfiction, Page Length Distribution, Books by Genre/Tag and Pages Read per Month (§5.4). |
@@ -244,7 +244,6 @@ All dialogs use `.modal-overlay` / `.modal`. Clicking the backdrop closes a dial
 | Field | tbr | reading | read | dnf |
 |---|:-:|:-:|:-:|:-:|
 | TBR Priority | ✓ | | | |
-| Owned or wishlist | ✓ | ✓ | ✓ | ✓ |
 | Progress slider | | ✓ | | |
 | Dates started/finished | | | ✓ | ✓ |
 | Rating | | | ✓ | |
@@ -253,8 +252,8 @@ All dialogs use `.modal-overlay` / `.modal`. Clicking the backdrop closes a dial
 | Flags (Top 5, Reread candidate, Is reread) | | | ✓ | |
 | Quotes (`text \|\| page` per line) | | | ✓ | |
 
-6. Always shown: Shelves (comma-separated), Genre/mood tags (comma-separated).
-7. Actions: Delete (edit only, confirm, then an Undo toast; §5.8), Cancel, Save. Save lays the form values over the existing record (or `{}` for a new book) and passes the result through `normalizeBook`. Fields the form doesn't show survive the edit: `dateAdded`, `sortIndex`, `topReadRank`, `readingLog`, `listenLog`. `coverData` comes from the upload state, and `owned` from the ownership select.
+6. Always shown: **Ownership** (a checkbox per category, built from `OWNERSHIP`; a book can be in several at once), Shelves (comma-separated), Genre/mood tags (comma-separated).
+7. Actions: Delete (edit only, confirm, then an Undo toast; §5.8), Cancel, Save. Save lays the form values over the existing record (or `{}` for a new book) and passes the result through `normalizeBook`. Fields the form doesn't show survive the edit: `dateAdded`, `sortIndex`, `topReadRank`, `readingLog`, `listenLog`. `coverData` comes from the upload state, and `ownership` from the checkboxes.
 
 **Bulk Import:** two stages.
 - *Preview:* "Found N new book(s)". An optional **"Title and ISBN columns are separate lists"** checkbox appears only when some rows contain both, and its hint gives the import count for each reading. Then "Add as" priority, Cancel, and Start Import.
@@ -335,7 +334,7 @@ All charts are hand-built HTML/SVG, use colours from the palette tokens, share a
 ### 5.7 Profiles
 - **Switch:** save → set `activeId` → repoint `data` → leave select mode → save → apply theme → re-render. The toast names the new profile.
 - **Theme:** the profile colour becomes `--accent`, and `--accent-ink` is set to dark or white based on Rec. 601 luma (> 0.6 → dark). The document title becomes "‹name› — Book Tracker".
-- **Send to…** and **Add to my TBR** both use `copyForProfile`. It copies bibliographic fields (including an uploaded `coverData`), series, format, pages, shelves, and tags. The copy gets the default `owned: true`. Status is set to tbr/someday, notes to "From ‹sender›", and reading history is dropped. Both refuse duplicates via `sameBook`.
+- **Send to…** and **Add to my TBR** both use `copyForProfile`. It copies bibliographic fields (including an uploaded `coverData`), series, format, pages, audiobook length, shelves, and tags. The copy starts with no ownership category — how the sender holds their copy says nothing about the recipient's. Status is set to tbr/someday, notes to "From ‹sender›", and reading history is dropped. Both refuse duplicates via `sameBook`.
 - **`sameBook(a,b)`:** if both books have ISBNs (digits/X only), compare ISBNs. Otherwise compare trimmed, lower-cased title **and** author.
 
 ### 5.8 Undo for book deletes
@@ -376,10 +375,35 @@ TBR tier cards and Top 5 rows have ↑/↓ buttons (`moveButtonsHTML`). `moveInL
 ### 5.14 Book detail view
 `openDetail(book)` builds a `<dl>` of the fields that have values. Which rows appear depends on status: Priority for tbr, Progress for reading, Rating for read. The rest are Ownership, Series, Format, Pages, ISBN, Started, Finished and Added (dates via `toLocaleDateString`), Flags, Shelves, Tags, and whether the cover is uploaded or from a URL. Audiobook length, Time listened and Time remaining appear for any book that has either audio field, so they stay visible on a book whose format was later changed away from audiobook. Below that come the DNF reason, the full notes (`white-space: pre-wrap`), and every quote with its page. Everything goes through `esc()`. Delegation: a click on any `[data-detail-id]` is handled first in the body click listener. Focus moves to **Close** when the dialog opens.
 
-### 5.15 Owned vs. wishlist
-- `owned` defaults to `true`. The Add/Edit dialog shows **Owned or wishlist** for every status (to be read, reading, read, did not finish), because a book can be finished or dropped without being owned. The detail view shows Ownership for every status too.
-- The *Wishlist* badge shows on any TBR book with `owned: false`, and on not-owned read books **only on the Read tab** (`renderRead` passes `{wishlistBadge:true}` to `bookCardHTML`). The same read book shown on Series, Recommendations and so on, and not-owned DNF or currently-reading books, get no badge.
-- The owned filter exists only on the TBR tab. It narrows both tiers, and counts as an active filter for the empty-state message.
+### 5.15 Ownership categories
+- **`OWNERSHIP`** is the single list of categories, in the order they are offered, listed
+  and sorted in: *Owned — physical*, *Owned — ebook*, *Owned — audiobook*, *Borrowed*,
+  *Loaned out*, *Wishlist*. Adding one there is the only edit needed — the dialog's
+  checkboxes and both filters are built from it at load.
+- A book carries a **list**, not a single choice, because a real shelf does not work that
+  way: the hardback and the audiobook can both be yours, and a copy you own can be lent
+  out. `ownership` is stored in `OWNERSHIP` order however the boxes were ticked, so two
+  books in the same categories always compare and read the same way.
+- **Migration.** The older `owned` boolean said *whether* a book was owned but not in what
+  form, so `normalizeOwnership` reads the format as the best evidence for that:
+  `owned: true` becomes the matching owned category, `owned: false` becomes `["wishlist"]`,
+  and a book with neither field stays uncategorised rather than being claimed as owned on
+  no evidence. New books start with nothing ticked for the same reason.
+- **Sorting** by category (Library) uses `ownershipRank`: the position of the first
+  category a book is in, so a book that is owned-physical *and* loaned sorts with the
+  owned ones. A book in no category sorts last rather than leading with a blank. Title
+  breaks ties.
+- **Filtering** (Library and TBR) shares one `matchesOwnership` and one option list built
+  by `fillOwnershipFilter`: *All categories*, *Owned (any form)* — which covers all three
+  owned categories — each category on its own, and *No category yet*.
+- The **Wishlist badge** still shows on any TBR book in the wishlist category, and on a
+  not-owned read book only where the Read tab asks for it (`renderRead` passes
+  `{wishlistBadge:true}` to `bookCardHTML`). The other categories are deliberately not
+  badged: the browsing views stay bare, and the categories are readable from the detail
+  view, the Library's category sort, and the filters.
+- The detail view lists every category a book is in, and omits the row entirely for a book
+  in none.
+
 
 ### 5.16 Daily page log and pace
 - Each card on the Logs tab's 📖 *Books* side has a pages box, a date box (defaults to today, can't be set to a future day) and **Log pages** (Enter anywhere in the row does the same). `addLogEntry` accepts 1–5000 pages. A second entry for the same day is added to the first.
@@ -628,6 +652,7 @@ Made from `new-features.md` and checked in headless Edge (51 checks, plus the ea
 | F7 | Audiobooks counted in time throughout | Currently Reading logs minutes for an audiobook instead of pages, the pace table reports either unit, and the Add/Edit dialog swaps the page box for the running time (§5.17, §4.4) |
 | F8 | Tabs reorganised into eight | Library first; Currently Reading and Audiobooks merged into a two-sided **Logs** tab generated from one description of the two units; Stats & Pace narrowed to **Pacing** with its library charts moved to Rankings; Discovery folded into TBR (§4.3, §5.17) |
 | F9 | Logs scoped to books in progress | The Logs tab lists only `reading` books, dropping the status filter, the status badge and the start/reread actions; finished logs stay in the chart, the Pacing figures and the detail view (§5.17) |
+| F10 | Ownership categories | `ownership` list replacing the `owned` boolean: owned physical/ebook/audiobook, borrowed, loaned out, wishlist, several at once, with a category sort and filter on Library and a category filter on TBR (§5.15) |
 
 ### 10.4 Still open
 
