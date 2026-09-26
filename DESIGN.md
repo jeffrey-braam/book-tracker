@@ -12,7 +12,7 @@ Book Tracker is a personal reading log that runs entirely in the browser. It tra
 
 - **Zero install.** One HTML file: open it and it runs. No server, build step, framework, or charting library.
 - **Local-first and private.** All data lives in `localStorage`. The only network traffic is anonymous metadata/cover lookups to public book APIs.
-- **Readable by a non-expert.** The source is heavily commented in a teaching tone. It explains CSS variables, event delegation, JSONP, SVG paths, and so on.
+- **Compact source.** The code carries no comments. Repeated logic lives in small shared helpers, and this document is the place to find explanations.
 - **Distrust remote data.** Cover URLs are verified by actually loading them. Genre tags are filtered through an allow-list. A slow network is never treated as "no cover".
 
 ### Non-goals / out of scope today
@@ -514,7 +514,7 @@ Up to 8 OL docs, or Google Books if OL finds none. Covers are **not** probed her
 ### 6.4 Cover verification
 - `probeCover(url)` loads an `Image` and returns one of three states: **ok** (`naturalWidth > 1`), **missing** (error or 1×1), **timeout** (20 s).
 - Results are cached per URL, **except timeouts**. A timeout reflects the network, not the URL.
-- `resolveCover(candidates)` returns the first OK URL plus an `inconclusive` flag if any candidate timed out.
+- `firstWorkingCover(candidates)` probes the candidates in order and returns the first OK URL, or `""` if none loads.
 - Rendered `<img>` tags use inline `onload="checkCoverLoaded(this)"` / `onerror="coverToPlaceholder(this)"`, both exposed on `window`, to swap in a text placeholder at display time.
 
 ### 6.5 iTunes matching safeguards
