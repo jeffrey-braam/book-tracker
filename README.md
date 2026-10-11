@@ -30,7 +30,7 @@ Each book moves through **To-be-read → Reading → Read** or **Did Not Finish*
 |---|---|
 | **Library** | A cover grid of every book, with search, a category filter, and sorting by title, author or category. |
 | **Read** | Finished books, sortable by date, rating or title, with a rereads-only filter. |
-| **Logs** | A daily tracker for books in progress, with **📖 Books** (pages) and **🎧 Audiobooks** (hours and minutes) side by side. Log what you read each day. Progress updates itself, and a 30-day chart shows your reading. |
+| **Logs** | A daily tracker for books in progress, with **📖 Books** (pages) and **🎧 Audiobooks** (hours and minutes) side by side. Log what you read each day. Progress updates itself. A month calendar shows which days you logged and how much, and picking a day lists each book read that day. A 30-day chart shows your reading. |
 | **Pacing** | A yearly book goal, reading stats (books per month, pages, streaks, pages per day), and a table estimating when each current book will be finished. |
 | **TBR & Discovery** | Your to-be-read list in two tiers, **Up Next** and **Someday**, reordered by drag or ↑/↓. It also has series "next up" suggestions, 🎲 Pick for me, mood-based picks, recommendations based on what you rated highly, comparing with another profile, and reading challenges (bingo cards or checklists). |
 | **DNF** | Books you gave up on, and why. |

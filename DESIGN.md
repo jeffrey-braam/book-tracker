@@ -29,9 +29,9 @@ Book Tracker is a personal reading log that runs entirely in the browser. It tra
 
 | Section | Lines (approx.) | Contents |
 |---|---|---|
-| `<style>` | 13–293 | Design tokens, light/dark themes, all component CSS |
-| Markup | 295–922 | Header, selection bar, tab bar, 8 view panels (one of them holding two sub-panels), 5 modal dialogs, toast, chart tooltip |
-| `<script>` | 923–4723 | Whole app in one strict-mode IIFE |
+| `<style>` | 7–246 | Design tokens, light/dark themes, all component CSS |
+| Markup | 248–799 | Header, selection bar, tab bar, 8 view panels (one of them holding two sub-panels), 5 modal dialogs, toast, chart tooltip |
+| `<script>` | 800–3700 | Whole app in one strict-mode IIFE |
 
 ### 2.2 Runtime model
 
@@ -50,9 +50,9 @@ localStorage["bookTrackerProfiles_v1"]
 
 - **Single source of truth:** the in-memory `store`. `data` points into the active profile, so almost all feature code reads and writes `data.books` / `data.challenges` and never needs to know profiles exist.
 - **Render strategy:** "rebuild everything". After any change, `renderAll()` calls 13 render functions. Each one filters `data.books`, builds an HTML string, and assigns it to `innerHTML`. This is simple, and the screen always matches the data. The trade-off is that all interpolated text must go through `esc()`.
-- **Event handling:** delegated. Listeners sit on `document.body` or on stable containers and dispatch on `data-*` attributes (`data-detail-id`, `data-action`, `data-id`, `data-tier-move`, `data-move` / `data-move-list`, `data-send-id`, `data-log-row` / `data-total-row` / `data-log-edit` with `data-kind` + `data-book` on each, and `data-log-add` / `data-total-save` / `data-log-save` / `data-log-remove` on their buttons, `data-log-kind`, `data-grab-from`, `data-chart-toggle`, `data-tip`, `data-select-id`, `data-challenge`, `data-prof-*`). Re-rendering therefore never orphans a listener.
+- **Event handling:** delegated. Listeners sit on `document.body` or on stable containers and dispatch on `data-*` attributes (`data-detail-id`, `data-action`, `data-id`, `data-tier-move`, `data-move` / `data-move-list`, `data-send-id`, `data-log-row` / `data-total-row` / `data-log-edit` with `data-kind` + `data-book` on each, and `data-log-add` / `data-total-save` / `data-log-save` / `data-log-remove` on their buttons, `data-log-kind`, `data-cal-step` / `data-cal-day` (with `data-kind`), `data-grab-from`, `data-chart-toggle`, `data-tip`, `data-select-id`, `data-challenge`, `data-prof-*`). Re-rendering therefore never orphans a listener.
 - **View switching:** each tab is a `.view` div, and the active one has `.active` (CSS `display:block`). Switching tabs moves the class and calls `renderAll()`. The Logs tab has a second level of the same idea: two `.log-panel` divs, one `.active` at a time (§4.3).
-- **Module-level UI state** (not persisted): `selectionMode`, `selectedIds` (Set), `editingId`, `titleHits`, `bulkEntries`, `bulkRawText`, `bulkStopRequested`, `dragSrcId`, `dragDropped`, `chartViewMode`, `librarySort`, `sendBookId`, `coverProbeCache`, `saveCount` and `pendingUndo` (undo, §5.8), `editCoverData` (upload in the open Edit dialog, §5.13), `detailBookId` (§5.14). Search boxes and the series sort are read straight from their inputs at render time.
+- **Module-level UI state** (not persisted): `selectionMode`, `selectedIds` (Set), `editingId`, `titleHits`, `bulkEntries`, `bulkRawText`, `bulkStopRequested`, `dragSrcId`, `dragDropped`, `chartViewMode`, `librarySort`, `sendBookId`, `coverProbeCache`, `saveCount` and `pendingUndo` (undo, §5.8), `editCoverData` (upload in the open Edit dialog, §5.13), `detailBookId` (§5.14), `logCal` (each Logs side's calendar month and picked day, §5.17). Search boxes and the series sort are read straight from their inputs at render time.
 
 ### 2.3 Utilities
 
@@ -218,7 +218,7 @@ opens on.
 |---|---|
 | **Library** | Cover-grid browse view of every book (2:3 covers, title, author, no action buttons; cover or title opens the detail view). Search (title/author), an ownership-category filter, and sort by title, by author (authorless last) or by category (§5.15). Sorting by category also prints each book's categories under its author, so the order has a visible reason. Shows a book count, or "N of M books" while searching. |
 | **Read** | Search, sort (newest/oldest finished, highest rated, title A–Z), "Rereads only" checkbox, then cards with status `read`. |
-| **Logs** | The day-to-day tracker, split into two **sub-tabs** — 🎧 *Audiobooks* and 📖 *Books* — because the two kinds of book are counted in different units. Each side shows only books with status `reading`: five stat tiles over what is in progress, search, one card per book (editable total, amount done and left, a log row, the day's entry) and its own per-day line chart with a per-book picker and a "View as table" toggle. Both sides are generated from the same code (§5.17). |
+| **Logs** | The day-to-day tracker, split into two **sub-tabs** — 🎧 *Audiobooks* and 📖 *Books* — because the two kinds of book are counted in different units. Each side shows only books with status `reading`: five stat tiles over what is in progress, search, one card per book (editable total, amount done and left, a log row, the day's entry), a month calendar of logged days, and its own per-day line chart with a per-book picker and a "View as table" toggle. Both sides are generated from the same code (§5.17). |
 | **Pacing** | "‹year› reading goal" number box + **Save goal** (Enter also saves), the stat tiles (led by the goal tile when a goal is set, then the page-log tiles once anything is logged), and the **Currently Reading Pace** table (§5.16). No charts — the ones that describe the library live on Rankings. |
 | **TBR & Discovery** | *Next Up Suggestions* panel (shown only if any). Search, shelf filter, ownership-category filter, genre/mood filter, 🎲 Pick for me (result under the toolbar). Two draggable tiers, **Up Next** and **Someday**, ordered by `sortIndex`. Then 🌙 Mood-Based Picks, 👥 Compare With Another Profile, ✨ Recommended For You and 🎯 Reading Challenges. |
 | **DNF** | Search (title/author), then cards with status `dnf`. |
@@ -432,7 +432,7 @@ differs is gathered in one table and the rest is written once against it.
   (`addLogEntry`, `setLogEntry`, `saveLogEdit`, `saveLogTotal`, `syncLogProgress`), the
   numbers (`logPace`, `logShownDone`), the markup (`logFiguresHTML`, `logTotalRowHTML`,
   `logEntryRowHTML`, `logSummaryHTML`, `logSectionHTML`, `logCardHTML`) and the views
-  (`renderLogSection`, `logTotalsByDate`, `renderDailyLogChart`). The pace table on Pacing
+  (`renderLogSection`, `logTotalsByDate`, `renderLogCalendar`, `logDayHTML`, `renderDailyLogChart`). The pace table on Pacing
   (§5.16) and the reading card built by `bookCardHTML` read through the same table.
 - The one thing that cannot be shared is the inner controls of the two editable rows: a
   time needs an hours and a minutes box, a page count needs one number box. That single
@@ -457,6 +457,17 @@ differs is gathered in one table and the rest is written once against it.
   through `syncLogProgress` — listened or read ÷ total, capped at 100%, and only ever
   upward. `setLogEntry` / `setListenEntry` apply the one exception: a correction may pull
   progress back down, but only when it is sitting exactly where the log put it.
+- **The calendar** (`renderLogCalendar`) sits between the cards and the chart on each side
+  and answers "which days did I read, and how much". It shows one month, Monday first, and
+  covers every book of that kind whatever its status, so a finished book's days stay on it.
+  A logged day is a button showing the day's total and a bar whose length is that total
+  against the month's best day; other days are plain, and days still to come are faded.
+  ‹ / › step a month, stopping at the month of the first entry and at the current month;
+  **This month** jumps back. A footnote gives the month's total, the number of days logged
+  and the average on those days. Picking a day lists every book read that day with its
+  amount (`logDayHTML`), largest first, each title opening the detail view; picking it again
+  closes the list. The chosen month and day live in `logCal`, are not saved, and reset the
+  day when the month changes. With nothing logged at all it shows `kind.calEmpty` instead.
 - **Corrections** live in the detail view, which shows a *Reading log* or *Listening log*
   section (or both): newest day first, each with its boxes, **Save** (Enter works) and
   **Remove**. Saving zero removes the day.

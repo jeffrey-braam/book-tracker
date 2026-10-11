@@ -183,6 +183,22 @@
   .chart-table th, .chart-table td{padding:5px 10px; text-align:left; border-bottom:1px solid var(--border);}
   .chart-table th{color:var(--muted); font-weight:600; font-size:0.74rem; text-transform:uppercase;}
   .chart-table td.num-col, .chart-table th.num-col{text-align:right; font-variant-numeric:tabular-nums;}
+  .cal-nav{display:flex; gap:6px; align-items:center; flex-wrap:wrap;}
+  .cal-month{font-weight:600; font-size:0.86rem; min-width:118px; text-align:center;}
+  .cal-grid{display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px;}
+  .cal-dow{font-size:0.7rem; color:var(--muted); text-align:center; font-weight:600; padding-bottom:2px;}
+  .cal-day{display:flex; flex-direction:column; gap:3px; min-height:58px; padding:5px 6px; border:1px solid var(--border); border-radius:6px; background:var(--panel); min-width:0;}
+  button.cal-day{background:var(--chip); color:var(--ink); font-size:inherit; font-weight:normal; text-align:left; padding:5px 6px; border-radius:6px; cursor:pointer;}
+  button.cal-day:hover{border-color:var(--accent); filter:none;}
+  .cal-day.sel{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);}
+  .cal-day.future{opacity:0.45;}
+  .cal-num{font-size:0.72rem; color:var(--muted); font-weight:600;}
+  .cal-day.today .cal-num{color:var(--accent);}
+  .cal-amt{font-size:0.78rem; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .cal-bar{margin-top:auto; height:4px; border-radius:2px; background:var(--series-1);}
+  .cal-detail{margin-top:14px;}
+  .cal-detail .log-list{max-height:none;}
+  @media (max-width:520px){ .cal-day{min-height:46px; padding:4px;} button.cal-day{padding:4px;} .cal-amt{font-size:0.66rem;} }
   .filter-row{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; align-items:center;}
   .series-card, .challenge-card{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:10px;}
   .series-head{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;}
@@ -348,6 +364,13 @@
       <div class="empty-msg" id="logAudioEmpty" style="display:none;">Nothing in progress. Start an audiobook from the TBR or Library and it will appear here.</div>
     </div>
     <div class="panel">
+      <div class="chart-head">
+        <h3>Listening Calendar</h3>
+        <div class="cal-nav" id="logAudioCalNav"></div>
+      </div>
+      <div id="logAudioCalendar"></div>
+    </div>
+    <div class="panel">
       <div class="chart-card" style="margin-bottom:0;">
         <div class="chart-head">
           <h3>Time Listened per Day (last 30 days)</h3>
@@ -372,6 +395,13 @@
       </div>
       <div class="grid-cards" id="logPagesCards"></div>
       <div class="empty-msg" id="logPagesEmpty" style="display:none;">Nothing in progress. Start a book from the TBR or Library and it will appear here.</div>
+    </div>
+    <div class="panel">
+      <div class="chart-head">
+        <h3>Reading Calendar</h3>
+        <div class="cal-nav" id="logPagesCalNav"></div>
+      </div>
+      <div id="logPagesCalendar"></div>
     </div>
     <div class="panel">
       <div class="chart-card" style="margin-bottom:0;">
@@ -821,6 +851,8 @@
       tileLabels: ["In Progress", "Total Length", "Time Listened", "Time Remaining", "Time / Day (last 7 days)"],
       chartCol: "Time listened",
       chartEmpty: "No listening time logged in the last 30 days",
+      calEmpty: "No listening time logged yet. Log time from a card above and the day will show up here.",
+      calNone: "Nothing listened to",
       axisMax: niceTimeMax, axisLabel: formatMinutes,
       unit: "",
       amountInputs: hmInputsHTML
@@ -843,6 +875,8 @@
       tileLabels: ["In Progress", "Total Pages", "Pages Read", "Pages Remaining", "Pages / Day (last 7 days)"],
       chartCol: "Pages logged",
       chartEmpty: "No pages logged in the last 30 days",
+      calEmpty: "No pages logged yet. Log pages from a card above and the day will show up here.",
+      calNone: "No pages logged",
       axisMax: niceMax,
       axisLabel: v => Math.round(v).toLocaleString(),
       unit: "pages",
@@ -2488,6 +2522,7 @@
   }
   function renderLogs(){
     BOTH_LOGS.forEach(kind=>renderLogSection(kind));
+    BOTH_LOGS.forEach(kind=>renderLogCalendar(kind));
     BOTH_LOGS.forEach(kind=>renderDailyLogChart(kind));
   }
   let activeLogKind = "audio";
@@ -3186,6 +3221,79 @@
     }) + `
       <p class="muted" style="margin-bottom:0;">${esc(kind.fmt(total))} over the last 30 days · ${esc(kind.fmt(total/30))} a day.</p>`;
   }
+  const logCal = { Audio: { month: "", day: "" }, Pages: { month: "", day: "" } };
+  function shiftMonth(key, step){
+    const d = parseYmd(key + "-01");
+    return monthKey(new Date(d.getFullYear(), d.getMonth() + step, 1));
+  }
+  function renderLogCalendar(kind){
+    const cal = logCal[kind.id], books = logBooks(kind);
+    const byDate = logTotalsByDate(books, kind);
+    const dates = Object.keys(byDate).sort();
+    const nav = el(kind, "CalNav"), wrap = el(kind, "Calendar");
+    if(!dates.length){
+      nav.innerHTML = "";
+      wrap.innerHTML = `<div class="chart-empty">${esc(kind.calEmpty)}</div>`;
+      return;
+    }
+    const today = todayStr(), thisMonth = today.slice(0, 7), firstMonth = dates[0].slice(0, 7);
+    const month = cal.month || thisMonth;
+    if(cal.day.slice(0, 7) !== month) cal.day = "";
+    const first = parseYmd(month + "-01");
+    const daysIn = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    const days = [];
+    for(let d=1; d<=daysIn; d++){ const key = month + "-" + String(d).padStart(2, "0"); days.push({ key, d, value: byDate[key]||0 }); }
+    const max = Math.max(...days.map(x=>x.value), 0);
+    const total = days.reduce((sum,x)=>sum + x.value, 0), logged = days.filter(x=>x.value).length;
+    const monthName = first.toLocaleDateString(undefined, { month:"long", year:"numeric" });
+    const navBtn = (step, label, text, off) =>
+      `<button class="small secondary" data-cal-step="${step}" data-kind="${kind.key}" aria-label="${label}"${off ? " disabled" : ""}>${text}</button>`;
+    nav.innerHTML = navBtn(-1, "Previous month", "‹", month <= firstMonth)
+      + `<span class="cal-month">${esc(monthName)}</span>`
+      + navBtn(1, "Next month", "›", month >= thisMonth)
+      + (month !== thisMonth ? `<button class="small secondary" data-cal-step="0" data-kind="${kind.key}">This month</button>` : "");
+    const dow = [0,1,2,3,4,5,6].map(i=>`<div class="cal-dow">${esc(new Date(2024, 0, 1 + i).toLocaleDateString(undefined, { weekday:"short" }))}</div>`).join("");
+    const lead = "<div></div>".repeat((first.getDay() + 6) % 7);
+    const cells = days.map(x=>{
+      const when = formatYmd(x.key);
+      const cls = (x.key === today ? " today" : "") + (x.key > today ? " future" : "") + (x.key === cal.day ? " sel" : "");
+      if(!x.value) return `<div class="cal-day${cls}"><span class="cal-num">${x.d}</span></div>`;
+      const text = when + ": " + kind.fmt(x.value);
+      return `<button type="button" class="cal-day${cls}" data-cal-day="${x.key}" data-kind="${kind.key}" data-tip="${esc(text)}" aria-label="${esc(text)}" aria-pressed="${x.key === cal.day}">
+        <span class="cal-num">${x.d}</span><span class="cal-amt">${esc(kind.bare(x.value))}</span>
+        <span class="cal-bar" style="width:${Math.max(10, Math.round(x.value / max * 100))}%"></span></button>`;
+    }).join("");
+    const summary = logged
+      ? `${esc(kind.fmt(total))} over ${logged} day${plural(logged)} in ${esc(monthName)} · ${esc(kind.fmt(total / logged))} on a day you logged.`
+        + (cal.day ? "" : " Pick a day to see what it was spent on.")
+      : `${esc(kind.calNone)} in ${esc(monthName)}.`;
+    wrap.innerHTML = `<div class="cal-grid">${dow}${lead}${cells}</div>
+      <p class="muted" style="margin-bottom:0;">${summary}</p>` + (cal.day ? logDayHTML(books, kind, cal.day) : "");
+  }
+  function logDayHTML(books, kind, date){
+    const rows = books.map(b=>({ b, amount: logEntries(b, kind).filter(e=>e.date === date).reduce((sum,e)=>sum + e[kind.field], 0) }))
+      .filter(r=>r.amount).sort((a,b)=>b.amount - a.amount);
+    const total = rows.reduce((sum,r)=>sum + r.amount, 0);
+    const when = parseYmd(date).toLocaleDateString(undefined, { weekday:"long", year:"numeric", month:"long", day:"numeric" });
+    return `<div class="cal-detail"><h3>${esc(when)} · ${esc(kind.fmt(total))}</h3>
+      <ul class="log-list">${rows.map(r=>`<li><button type="button" class="title-link" data-detail-id="${esc(r.b.id)}">${esc(r.b.title)}</button><span>${esc(kind.fmt(r.amount))}</span></li>`).join("")}</ul></div>`;
+  }
+  $("view-logs").addEventListener("click", (e)=>{
+    const t = e.target.closest("[data-cal-step], [data-cal-day]");
+    if(!t) return;
+    const kind = LOG_KINDS[t.dataset.kind], cal = logCal[kind.id];
+    if(t.dataset.calDay){
+      cal.day = cal.day === t.dataset.calDay ? "" : t.dataset.calDay;
+    } else {
+      const step = +t.dataset.calStep;
+      cal.month = step ? shiftMonth(cal.month || todayStr().slice(0, 7), step) : "";
+      cal.day = "";
+    }
+    const attr = t.dataset.calDay ? `data-cal-day="${t.dataset.calDay}"` : `data-cal-step="${t.dataset.calStep}"`;
+    renderLogCalendar(kind);
+    const again = $("view-logs").querySelector(`[${attr}][data-kind="${kind.key}"]`);
+    if(again && !again.disabled) again.focus();
+  });
   function pickForMe(resultId){
     const tbr = booksWith("tbr");
     if(!tbr.length){ toast("Your TBR is empty!"); return; }
